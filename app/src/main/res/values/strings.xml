@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Telemedia</string>
+    <string name="tagline">Your Telegram videos, in Stremio.</string>
+    <string name="please_wait">Please wait…</string>
+
+    <string name="starting">Starting…</string>
+    <string name="logging_in">Logging in…</string>
+    <string name="starting_addon">Starting Telemedia…</string>
+
+    <!-- Step 1: Telegram -->
+    <string name="login_title">1 · Log in to Telegram</string>
+    <string name="login_intro">Telemedia uses your Telegram account. The login stays on this phone.</string>
+    <string name="login_link">Log in with Telegram</string>
+    <string name="login_link_hint">Telegram opens and asks you to confirm. Then come back here.</string>
+    <string name="login_link_opened">Confirm in Telegram, then come back here.</string>
+    <string name="login_use_phone">Use my phone number</string>
+    <string name="phone_hint">Phone number, e.g. +972 50 123 4567</string>
+    <string name="send_code">Send code</string>
+    <string name="code_sent_app">Telegram sent a code to your Telegram app (chat “Telegram”). Type it here:</string>
+    <string name="code_sent_sms">Telegram sent you a code by SMS. Type it here:</string>
+    <string name="code_hint">Login code</string>
+    <string name="log_in">Log in</string>
+    <string name="no_telegram">Telegram isn\'t installed on this phone. Use your phone number instead.</string>
+
+    <string name="password_title">Two-step verification</string>
+    <string name="password_intro">Your Telegram account has a password. Type it to continue.</string>
+    <string name="password_hint">Password</string>
+    <string name="password_wrong">Wrong password. Try again.</string>
+    <string name="continue_button">Continue</string>
+
+    <string name="auto_setup_working">Logged in ✔\n\nNow getting your own Telegram API key (about a minute). Telegram sends a “login code” message to your “Telegram” chat: nothing to do, Telemedia reads it.</string>
+    <string name="auto_setup_switching">Almost done: switching to your own API key…</string>
+
+    <!-- Fallback: own API key by hand -->
+    <string name="config_title">Get your Telegram API key</string>
+    <string name="config_intro">Telemedia needs your own Telegram API key, from my.telegram.org. Type your phone number: Telegram sends a code to your Telegram app.</string>
+    <string name="config_code_sent">Telegram sent a code to your Telegram app (chat “Telegram”, message “Web login code”). Type it here:</string>
+    <string name="config_code_hint">Code from Telegram (letters and digits)</string>
+    <string name="config_working">Getting your API key from Telegram…</string>
+    <string name="config_manual">I already have an api_id and api_hash</string>
+    <string name="api_id_hint">api_id (numbers)</string>
+    <string name="api_hash_hint">api_hash (32 letters and digits)</string>
+    <string name="save">Save</string>
+
+    <!-- Step 2: groups -->
+    <string name="groups_title">2 · Get started with these groups</string>
+    <string name="groups_intro">Telemedia finds videos in the groups and channels you are in. Join some now to have videos right away. You can leave them anytime in Telegram.</string>
+    <string name="groups_loading">Loading suggested groups…</string>
+    <string name="groups_join">Join selected</string>
+    <string name="groups_skip">Skip</string>
+    <string name="groups_joining">Joining…</string>
+    <string name="groups_show">Suggested groups</string>
+
+    <!-- Step 3: Stremio -->
+    <string name="stremio_title">3 · Add to Stremio</string>
+    <string name="stremio_intro">Opens Stremio\'s website: log in with your Stremio account there and confirm. Then come back here.</string>
+    <string name="stremio_add">Add to Stremio</string>
+    <string name="stremio_waiting">Waiting for you to confirm on the Stremio page…</string>
+    <string name="stremio_installing">Adding Telemedia to your Stremio account…</string>
+    <string name="get_stremio">Get Stremio</string>
+    <string name="no_browser">No web browser found to open Stremio\'s page.</string>
+
+    <!-- Done -->
+    <string name="done_title">All set ✔</string>
+    <string name="done_text">Open Stremio, pick a movie or an episode, and choose a Telemedia stream.\n\nTelemedia keeps running in the background (see the notification) and starts with the phone.</string>
+    <string name="done_no_stremio">Install Stremio to watch.</string>
+    <string name="open_stremio">Open Stremio</string>
+
+    <string name="battery_text">Let Telemedia run in the background, so videos don\'t stop while you watch.</string>
+    <string name="battery_allow">Allow</string>
+
+    <string name="restart">Restart</string>
+    <string name="logout">Log out of Telegram</string>
+
+    <string name="notification_channel">Telemedia addon</string>
+    <string name="notification_title">Telemedia is running</string>
+    <string name="notification_text">Streams your Telegram videos to Stremio</string>
+</resources>

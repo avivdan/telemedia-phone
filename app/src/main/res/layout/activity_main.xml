@@ -332,6 +332,59 @@
                 android:visibility="gone" />
         </LinearLayout>
 
+        <!-- Other devices on the Wi-Fi (the LAN address with the personal key) -->
+        <LinearLayout
+            android:id="@+id/lan_card"
+            style="@style/Telemedia.Card">
+
+            <TextView
+                style="@style/Telemedia.CardTitle"
+                android:text="@string/lan_title" />
+
+            <TextView
+                style="@style/Telemedia.Text"
+                android:text="@string/lan_intro" />
+
+            <ImageView
+                android:id="@+id/lan_qr"
+                android:layout_width="220dp"
+                android:layout_height="220dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="16dp"
+                android:background="#FFFFFF"
+                android:contentDescription="@string/lan_qr_description"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/lan_url"
+                style="@style/Telemedia.Text"
+                android:layout_marginTop="12dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/fg"
+                android:textIsSelectable="true"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/lan_add"
+                style="@style/Telemedia.Button.Primary"
+                android:layout_marginTop="16dp"
+                android:text="@string/lan_add" />
+
+            <Button
+                android:id="@+id/lan_copy"
+                style="@style/Telemedia.Button.Secondary"
+                android:text="@string/lan_copy" />
+
+            <TextView
+                android:id="@+id/lan_note"
+                style="@style/Telemedia.Text"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/lan_error"
+                style="@style/Telemedia.Error" />
+        </LinearLayout>
+
         <!-- Battery optimization (asked once, offered here if declined) -->
         <LinearLayout
             android:id="@+id/battery_card"

@@ -9,8 +9,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import java.io.File
@@ -19,8 +21,14 @@ import java.io.File
  * Foreground service that hosts Node (the addon). Runs in the ":node" process
  * (see AndroidManifest) because node::Start() can only run once per
  * process: restarting Node means killing this process.
+ *
+ * While a video streams (to Stremio here or on another device), it holds a
+ * partial wake lock and a Wi-Fi lock, so serving goes on with the screen off.
  */
 class NodeService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -30,6 +38,7 @@ class NodeService : Service() {
             started = true
             // Node's main thread wants a bigger stack than the Java default.
             Thread(null, ::runNode, "node-main", 8L * 1024 * 1024).start()
+            Thread(::watchStreams, "stream-watch").apply { isDaemon = true }.start()
         }
         return START_STICKY
     }
@@ -50,6 +59,36 @@ class NodeService : Service() {
         }
         // Node can't be restarted in-process; let the system/UI restart us.
         Process.killProcess(Process.myPid())
+    }
+
+    // Polls the bootstrap for active video transfers (lan.js gateway).
+    private fun watchStreams() {
+        while (true) {
+            val active = ControlClient.status()?.optInt("activeStreams") ?: 0
+            try {
+                setAwake(active > 0)
+            } catch (e: Exception) {
+                Log.w(TAG, "wake lock", e)
+            }
+            Thread.sleep(5000)
+        }
+    }
+
+    @Suppress("DEPRECATION") // WIFI_MODE_FULL_HIGH_PERF: still the one that works with the screen off
+    private fun setAwake(on: Boolean) {
+        if (on && wakeLock?.isHeld != true) {
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Telemedia:stream")
+                .apply { setReferenceCounted(false); acquire(4 * 60 * 60 * 1000L) }
+            wifiLock = applicationContext.getSystemService(WifiManager::class.java)
+                ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Telemedia:stream")
+                ?.apply { setReferenceCounted(false); acquire() }
+            Log.i(TAG, "streaming: holding wake and Wi-Fi locks")
+        } else if (!on && wakeLock?.isHeld == true) {
+            wakeLock?.release()
+            wifiLock?.takeIf { it.isHeld }?.release()
+            Log.i(TAG, "no streams: released locks")
+        }
     }
 
     private fun startInForeground() {

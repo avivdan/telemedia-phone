@@ -33,9 +33,12 @@ const { unscramble } = require('./tv/starter-login');
 const { createLogin } = require('./login');
 const { fetchOwnKeys } = require('./setup');
 const groups = require('./groups');
+const lan = require('./lan');
+const stremioAccount = require('./stremio-account');
 
 const CONTROL_PORT = 7001;
-const ADDON_PORT = 7000;
+const PUBLIC_PORT = 7000; // the gateway (lan.js): this phone and the LAN
+const ADDON_INTERNAL_PORT = 7010; // the addon itself, 127.0.0.1 only
 const MAX_BODY = 8192;
 const STREMIO_PAIRING_MS = 20 * 60 * 1000; // stop polling Stremio after this
 const cfgPath = process.argv[2];
@@ -160,6 +163,11 @@ const actions = {
 
   // Stremio: a fresh link.stremio.com link for the "Add to Stremio" button.
   '/stremio/link': async () => ({ link: await stremioPairingLink() }),
+  // The same for the LAN address (Stremio on other devices).
+  '/lan/link': async () => {
+    if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
+    return { link: await lanPairingLink() };
+  },
 
   // Sign this phone out of Telegram (the app restarts us afterwards).
   '/logout': async () => {
@@ -194,6 +202,8 @@ function startControlServer() {
         stremioConnected,
         groups: groupsStatus,
         groupsCount: groupList().length,
+        lan: status.state === 'running' ? lanStatus : null,
+        activeStreams: gateway ? gateway.activeStreams() : 0,
       });
     }
     const action = req.method === 'POST' && actions[req.url];
@@ -314,16 +324,18 @@ async function sessionIsValid(cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// The addon, with config mapped to the env vars its src/config.ts reads.
+// The addon, with config mapped to the env vars its src/config.ts reads. It
+// listens on 127.0.0.1:ADDON_INTERNAL_PORT only; the gateway (lan.js) on
+// PUBLIC_PORT is what Stremio talks to, here and on other devices.
 // ---------------------------------------------------------------------------
-function waitForAddon(port) {
+function waitForAddon() {
   const deadline = Date.now() + 60_000;
   const probe = () => {
     http
-      .get({ host: '127.0.0.1', port, path: '/manifest.json', timeout: 2000 }, (res) => {
+      .get({ host: '127.0.0.1', port: ADDON_INTERNAL_PORT, path: '/manifest.json', timeout: 2000 }, (res) => {
         res.resume();
         if (res.statusCode === 200) {
-          const manifestUrl = `http://127.0.0.1:${port}/manifest.json`;
+          const manifestUrl = `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`;
           setStatus({ state: 'running', manifestUrl });
           resolveAddonReady({ manifestUrl });
           offerGroups(false);
@@ -340,8 +352,7 @@ function waitForAddon(port) {
 }
 
 function startAddon(cfg) {
-  const port = String(cfg.port || ADDON_PORT);
-  const base = 'http://127.0.0.1:' + port;
+  const base = 'http://127.0.0.1:' + PUBLIC_PORT; // the gateway
   for (const [k, v] of Object.entries(readDefaults().env || {})) {
     if (process.env[k] === undefined) process.env[k] = v;
   }
@@ -349,7 +360,7 @@ function startAddon(cfg) {
   process.env.TELEGRAM_API_HASH = cfg.apiHash;
   process.env.TELEGRAM_SESSION = cfg.session;
   process.env.ADDON_HOST = '127.0.0.1';
-  process.env.ADDON_PORT = port;
+  process.env.ADDON_PORT = String(ADDON_INTERNAL_PORT);
   process.env.PUBLIC_BASE_URL = base;
   process.env.STREAM_BASE_URL = base;
 
@@ -366,15 +377,124 @@ function startAddon(cfg) {
   };
 
   setStatus({ state: 'starting_addon' });
-  const addon = require(path.join(__dirname, 'dist', 'src', 'index.js'));
-  // Stremio on this phone asked for a catalog/meta/stream: it uses the addon.
-  if (addon.addonEvents && !stremioConnected) {
-    addon.addonEvents.once('stremio-request', () => {
-      console.log('[bootstrap] Stremio is using the addon');
-      markStremioConnected();
-    });
+  require(path.join(__dirname, 'dist', 'src', 'index.js'));
+  startLan();
+  waitForAddon();
+}
+
+// ---------------------------------------------------------------------------
+// Other devices (lan.js): the gateway, the phone's Wi-Fi address, and the
+// keyed LAN entry in the user's Stremio account (stremio-account.js), kept up
+// to date when the address changes.
+// ---------------------------------------------------------------------------
+const LAN_CHECK_MS = 15_000;
+const LAN_RETRY_MS = 2 * 60_000;
+let gateway = null;
+let lanStatus = { ip: null, url: null, state: 'idle', inAccount: false, needsReadd: false };
+let lanPairing = null; // the newest link login; older ones stop
+let lanRefreshAt = 0;
+
+function lanKey() {
+  let key = readConfig().lanKey;
+  if (!key) {
+    key = lan.newKey();
+    patchConfig({ lanKey: key });
   }
-  waitForAddon(Number(port));
+  return key;
+}
+
+const lanUrl = (ip) => (ip ? `http://${ip}:${PUBLIC_PORT}/${lanKey()}/manifest.json` : null);
+
+async function lanEntryManifest() {
+  const res = await fetch(`http://127.0.0.1:${ADDON_INTERNAL_PORT}/manifest.json`);
+  return lan.lanManifest(await res.json());
+}
+
+// Puts the current LAN address into the account behind authKey.
+async function addLanToAccount(authKey) {
+  const url = lanUrl(lanStatus.ip);
+  if (!url) throw new Error('Connect the phone to Wi-Fi first.');
+  const result = await stremioAccount.putAddon(authKey, url, await lanEntryManifest());
+  patchConfig({ lanAccountUrl: url });
+  console.log('[lan] Stremio account: ' + result);
+}
+
+async function checkLan() {
+  const ip = await lan.lanAddress().catch(() => null);
+  if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? 'is now ' + ip : 'gone'));
+  const url = lanUrl(ip);
+  lanStatus = { ...lanStatus, ip, url };
+  const cfg = readConfig();
+  // The address changed since it was added to Stremio: update the account.
+  if (url && cfg.lanAccountUrl && cfg.lanAccountUrl !== url && Date.now() > lanRefreshAt) {
+    lanRefreshAt = Date.now() + LAN_RETRY_MS;
+    if (!cfg.stremioAuthKey) {
+      lanStatus.needsReadd = true;
+    } else {
+      try {
+        await addLanToAccount(cfg.stremioAuthKey);
+        lanStatus.needsReadd = false;
+        lanStatus.error = null;
+      } catch (err) {
+        console.log('[lan] could not update Stremio: ' + messageOf(err));
+        if (stremioAccount.isAuthError(err)) patchConfig({ stremioAuthKey: undefined });
+        lanStatus.needsReadd = true;
+      }
+    }
+  }
+  lanStatus.inAccount = !!url && readConfig().lanAccountUrl === url;
+  if (lanStatus.inAccount) lanStatus.needsReadd = false;
+}
+
+function startLan() {
+  lanKey();
+  gateway = lan.createGateway({
+    port: PUBLIC_PORT,
+    addonPort: ADDON_INTERNAL_PORT,
+    getKey: lanKey,
+    isSelf: (address) => !!address && address === lanStatus.ip,
+    dedupeSelf: () => stremioConnected,
+    onLocalStremio: () => {
+      if (stremioConnected) return;
+      console.log('[bootstrap] Stremio on this phone is using the addon');
+      markStremioConnected();
+    },
+  });
+  checkLan().catch(() => {});
+  setInterval(() => checkLan().catch(() => {}), LAN_CHECK_MS);
+}
+
+// "Add to my Stremio account" for other devices: a link.stremio.com link;
+// once the user confirms, the LAN entry is added and the session key kept,
+// so a later address change updates the account without asking again.
+async function lanPairingLink() {
+  await checkLan();
+  if (!lanStatus.url) throw new Error('Connect the phone to Wi-Fi first.');
+  const { code, link } = await stremioAccount.createLink();
+  const run = {};
+  lanPairing = run;
+  lanStatus = { ...lanStatus, state: 'waiting', error: null };
+  (async () => {
+    const authKey = await stremioAccount.waitForLink(code, () => lanPairing !== run);
+    if (lanPairing !== run) return;
+    if (!authKey) {
+      lanStatus = { ...lanStatus, state: 'idle' };
+      return;
+    }
+    lanStatus = { ...lanStatus, state: 'installing' };
+    try {
+      await addLanToAccount(authKey);
+      const old = readConfig().stremioAuthKey;
+      patchConfig({ stremioAuthKey: authKey });
+      if (old && old !== authKey) stremioAccount.logout(old).catch(() => {});
+      lanStatus = { ...lanStatus, state: 'idle', inAccount: true, needsReadd: false };
+    } catch (err) {
+      console.log('[lan] add to Stremio failed: ' + messageOf(err));
+      stremioAccount.logout(authKey).catch(() => {});
+      lanStatus = { ...lanStatus, state: 'error', error: messageOf(err) };
+    }
+  })().catch(() => {});
+  return link;
 }
 
 // ---------------------------------------------------------------------------

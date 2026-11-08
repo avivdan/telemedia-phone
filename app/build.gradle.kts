@@ -85,6 +85,11 @@ android {
     }
 }
 
+dependencies {
+    // QR code of the LAN address, for Stremio on other devices.
+    implementation("com.google.zxing:core:3.5.3")
+}
+
 // Zip the staged Node project (npm run bundle) into assets.
 val nodeStage = rootProject.file("node-staging/nodejs-project")
 val zipNodeProject by tasks.registering(Zip::class) {

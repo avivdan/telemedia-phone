@@ -36,6 +36,38 @@ Done. Open Stremio, pick any movie or episode, choose a **Telemedia** stream.
 
 If Telemedia doesn't show up in Stremio yet, close Stremio and open it again.
 
+## Watch on your TV or computer too
+
+The phone can also serve Stremio on other devices on the same Wi-Fi (a TV, a
+PC), like a small home server.
+
+1. In Telemedia, under **Use from another device**, tap **Add to my Stremio
+   account** and confirm on the Stremio page. Stremio on every device logged
+   in to that account gets **Telemedia (phone)**.
+   Or, in Stremio on the other device, paste the address shown under the QR
+   code into the Add-ons search box and install it.
+2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
+   the screen off.
+
+The address has a personal key in it (`http://<phone-ip>:7000/<key>/manifest.json`):
+without the key, the phone answers nothing to the network. Don't share it.
+
+**Give the phone a fixed address.** The address contains the phone's Wi-Fi IP.
+If it changes, Telemedia updates your Stremio account by itself, but it's
+simplest to set a *DHCP reservation* for the phone in your router (often
+under LAN / DHCP settings: pick the phone, "reserve IP" or "static lease").
+On Android also set *Wi-Fi → your network → Privacy → Use device MAC*, or the
+phone may show up with a new MAC (and IP) after a while.
+
+On a device that runs its own Telemedia (the TV app), you see both: its own
+**Telemedia** and **Telemedia (phone)**. Remove one in Stremio's Add-ons if you
+don't need it. On the PC, use the Stremio desktop app (the web version at
+web.stremio.com can't reach `http://` addresses).
+
+**Outside home?** Not built in. One option: install
+[Tailscale](https://tailscale.com) on the phone and the other device, and use
+the phone's Tailscale IP in the address instead.
+
 ## Everyday use
 
 - Nothing to do: Telemedia runs in the background (see its notification) and
@@ -48,8 +80,9 @@ If Telemedia doesn't show up in Stremio yet, close Stremio and open it again.
 ## Good to know
 
 - Your Telegram login stays on the phone. It's only sent to Telegram.
-- The addon only answers on the phone itself (`127.0.0.1`): other devices on
-  your Wi-Fi can't use your Telegram through it.
+- Other devices on your Wi-Fi can only use Telemedia with the address that
+  has your personal key in it. It travels unencrypted on your Wi-Fi, so use it
+  at home, not on public Wi-Fi.
 - If Telegram says "too many tries", wait a few hours before trying again.
 - Telemedia and Telemedia TV can share one Stremio account: each device plays
   from its own Telemedia.
@@ -72,14 +105,34 @@ proj/
 ```
 MainActivity (UI process)                NodeService (":node" process, foreground service)
   one card per setup step       ──▶       node-bootstrap/main.js
-  polls 127.0.0.1:7001                      ├─ control server :7001 (status + actions)
+  polls 127.0.0.1:7001                      ├─ control server 127.0.0.1:7001 (status + actions)
                                             ├─ login.js   Telegram login on the phone
                                             ├─ setup.js   own API key (starter key → own key)
                                             ├─ groups.js  head-start groups (join on request)
+                                            ├─ lan.js     gateway 0.0.0.0:7000 → addon
+                                            ├─ stremio-account.js  LAN entry in the Stremio account
                                             ├─ tv/stremio-link.js, tv/my-telegram.js (from the TV app)
-                                            └─ require(addon dist) → addon on 127.0.0.1:7000
+                                            └─ require(addon dist) → addon on 127.0.0.1:7010
 BootReceiver → starts NodeService on boot, once set up
 ```
+
+**Serving other devices** (`lan.js`). The addon is unchanged and listens on
+127.0.0.1:7010 only. A gateway on 0.0.0.0:7000 forwards to it:
+- from the phone itself (127.0.0.1), no key: `http://127.0.0.1:7000/manifest.json`;
+- from the network, only with the personal key (random, made once, in the
+  app's `config.json`): `http://<phone-ip>:7000/<key>/manifest.json`. Anything
+  else from the network gets 404. For keyed requests the gateway rewrites the
+  stream URLs to the keyed address (from the request's `Host`) and serves the
+  manifest as `community.telemedia.lan` / "Telemedia (phone)", so the account
+  holds it next to the 127.0.0.1 entry instead of replacing it. When the
+  phone's own Stremio uses the 127.0.0.1 entry, keyed catalog/stream requests
+  from the phone itself get empty answers (no duplicates).
+- "Add to my Stremio account" (`stremio-account.js`) is the link login again,
+  but the Stremio session key is kept (app-private) so that when the Wi-Fi IP
+  changes the entry is replaced in place. If that session stops working, the
+  app asks to add it again.
+- While a video streams, `NodeService` holds a partial wake lock and a Wi-Fi
+  lock (it polls `activeStreams` in `/status`).
 
 **Build and install** (Android SDK with NDK and CMake 3.22.1, JDK 17; both
 found under `%LOCALAPPDATA%\Android` if `JAVA_HOME`/`ANDROID_HOME` aren't set):

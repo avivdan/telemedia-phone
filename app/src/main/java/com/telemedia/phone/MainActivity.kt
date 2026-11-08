@@ -4,10 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -29,8 +33,13 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.NumberFormat
@@ -39,7 +48,7 @@ import java.text.NumberFormat
  * The whole app on one screen. Polls the Node control server
  * (node-bootstrap/main.js) and shows the card for the current step:
  * Telegram login → (automatic own-key setup) → head-start groups →
- * Add to Stremio → done.
+ * Add to Stremio → done, plus "Use from another device" (the LAN address).
  */
 class MainActivity : Activity() {
 
@@ -89,6 +98,12 @@ class MainActivity : Activity() {
     private lateinit var doneText: TextView
     private lateinit var openStremio: Button
     private lateinit var showGroups: Button
+    private lateinit var lanCard: View
+    private lateinit var lanQr: ImageView
+    private lateinit var lanUrl: TextView
+    private lateinit var lanAdd: Button
+    private lateinit var lanNote: TextView
+    private lateinit var lanError: TextView
     private lateinit var batteryCard: View
     private lateinit var footer: View
     private lateinit var logout: Button
@@ -96,6 +111,8 @@ class MainActivity : Activity() {
     private var phoneMode = false
     private var linkOpened = false
     private var stremioOpened = false
+    private var lanOpened = false
+    private var shownLanUrl: String? = null
     private var manualKeys = false
     private var configCodeShown = false
     private var shownGroups: String? = null
@@ -177,6 +194,12 @@ class MainActivity : Activity() {
         doneText = findViewById(R.id.done_text)
         openStremio = findViewById(R.id.open_stremio)
         showGroups = findViewById(R.id.show_groups)
+        lanCard = findViewById(R.id.lan_card)
+        lanQr = findViewById(R.id.lan_qr)
+        lanUrl = findViewById(R.id.lan_url)
+        lanAdd = findViewById(R.id.lan_add)
+        lanNote = findViewById(R.id.lan_note)
+        lanError = findViewById(R.id.lan_error)
         batteryCard = findViewById(R.id.battery_card)
         footer = findViewById(R.id.footer)
         logout = findViewById(R.id.logout)
@@ -263,6 +286,20 @@ class MainActivity : Activity() {
         stremioGet.setOnClickListener { Stremio.openStoreListing(this) }
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
+        // Other devices: the LAN address into the Stremio account, or copy it.
+        lanAdd.setOnClickListener {
+            action("/lan/link", JSONObject(), lanAdd, lanError) { reply ->
+                if (openLink(reply.getString("link"))) lanOpened = true
+                else showError(lanError, getString(R.string.no_browser))
+            }
+        }
+        findViewById<Button>(R.id.lan_copy).setOnClickListener {
+            val url = shownLanUrl ?: return@setOnClickListener
+            getSystemService(ClipboardManager::class.java)
+                ?.setPrimaryClip(ClipData.newPlainText(getString(R.string.app_name), url))
+            Toast.makeText(this, R.string.lan_copied, Toast.LENGTH_SHORT).show()
+        }
+
         findViewById<Button>(R.id.battery_allow).setOnClickListener { requestBatteryExemption() }
         findViewById<Button>(R.id.restart).setOnClickListener { restartNode() }
         logout.setOnClickListener {
@@ -282,7 +319,7 @@ class MainActivity : Activity() {
     private fun render(polled: JSONObject?) {
         val s = if (System.currentTimeMillis() < restartingUntil) null else polled
         val state = s?.optString("state") ?: "offline"
-        val cards = listOf(loginCard, passwordCard, configCard, groupsCard, stremioCard, doneCard, batteryCard)
+        val cards = listOf(loginCard, passwordCard, configCard, groupsCard, stremioCard, doneCard, lanCard, batteryCard)
         var visible = setOf<View>()
         val text: String? = when (state) {
             "offline", "starting" -> getString(R.string.starting)
@@ -375,6 +412,10 @@ class MainActivity : Activity() {
                 showGroups.visibility = if (s.optInt("groupsCount") > 0) View.VISIBLE else View.GONE
             }
         }
+        if (groupsCard !in visible) {
+            visible += lanCard
+            renderLan(s.optJSONObject("lan") ?: JSONObject())
+        }
         if (!ignoringBatteryOptimizations()) {
             visible += batteryCard
             askBatteryOnce()
@@ -453,6 +494,36 @@ class MainActivity : Activity() {
             out.setSpan(ForegroundColorSpan(getColor(R.color.muted)), start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         return out
+    }
+
+    private fun renderLan(lan: JSONObject) {
+        val url = lan.optStr("url")
+        if (url != shownLanUrl) {
+            shownLanUrl = url.ifEmpty { null }
+            lanUrl.text = url
+            if (url.isNotEmpty()) lanQr.setImageBitmap(qrBitmap(url, 600))
+        }
+        val onWifi = url.isNotEmpty()
+        lanQr.visibility = if (onWifi) View.VISIBLE else View.GONE
+        lanUrl.visibility = if (onWifi) View.VISIBLE else View.GONE
+        lanAdd.isEnabled = onWifi && lan.optStr("state") != "installing"
+        val note = when {
+            !onWifi -> getString(R.string.lan_no_wifi)
+            lan.optStr("state") == "installing" -> getString(R.string.stremio_installing)
+            lan.optStr("state") == "waiting" && lanOpened -> getString(R.string.stremio_waiting)
+            lan.optBoolean("needsReadd") -> getString(R.string.lan_readd)
+            lan.optBoolean("inAccount") -> getString(R.string.lan_in_account)
+            else -> ""
+        }
+        lanNote.text = note
+        lanNote.visibility = if (note.isEmpty()) View.GONE else View.VISIBLE
+        setError(lanError, if (lan.optStr("state") == "error") "Couldn't add it: " + lan.optStr("error") else "")
+    }
+
+    private fun qrBitmap(text: String, size: Int): Bitmap {
+        val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, mapOf(EncodeHintType.MARGIN to 1))
+        val pixels = IntArray(size * size) { i -> if (matrix[i % size, i / size]) Color.BLACK else Color.WHITE }
+        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
     }
 
     private fun renderStremio(stremio: JSONObject) {

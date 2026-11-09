@@ -168,6 +168,22 @@ const actions = {
 
   // Stremio: a fresh link.stremio.com link for the "Add to Stremio" button.
   '/stremio/link': async () => ({ link: await stremioPairingLink() }),
+  // Read-only: the addons in the Stremio account (needs the session kept by
+  // "Add to my Stremio account"); names and hosts only, for checking.
+  '/stremio/addons': async () => {
+    const authKey = readConfig().stremioAuthKey;
+    if (!authKey) throw new Error('No Stremio session: tap "Add to my Stremio account" first.');
+    return { addons: await stremioAccount.listAddons(authKey) };
+  },
+  // Puts both Telemedia entries back into the account with the kept session
+  // (when a Stremio app dropped them; checking / repair tool).
+  '/stremio/repair': async () => {
+    const authKey = readConfig().stremioAuthKey;
+    if (!authKey) throw new Error('No Stremio session: tap "Add to my Stremio account" first.');
+    await checkLan();
+    await addLanToAccount(authKey, { withLocal: true });
+    return { addons: await stremioAccount.listAddons(authKey) };
+  },
   // The same for the LAN address (Stremio on other devices).
   '/lan/link': async () => {
     if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
@@ -398,6 +414,8 @@ let gateway = null;
 let lanStatus = { ip: null, url: null, state: 'idle', inAccount: false, needsReadd: false };
 let lanPairing = null; // the newest link login; older ones stop
 let lanRefreshAt = 0;
+let lastLocalStremio = 0; // last Stremio request on 127.0.0.1
+const LOCAL_IN_USE_MS = 10 * 60_000;
 
 function lanKey() {
   let key = readConfig().lanKey;
@@ -410,18 +428,24 @@ function lanKey() {
 
 const lanUrl = (ip) => (ip ? `http://${ip}:${PUBLIC_PORT}/${lanKey()}/manifest.json` : null);
 
-async function lanEntryManifest() {
+async function addonManifest() {
   const res = await fetch(`http://127.0.0.1:${ADDON_INTERNAL_PORT}/manifest.json`);
-  return lan.lanManifest(await res.json());
+  return res.json();
 }
 
 // Puts the current LAN address into the account behind authKey.
-async function addLanToAccount(authKey) {
+// withLocal: also (re-)add the 127.0.0.1 entry, which Stremio on this phone
+// and on a TV running Telemedia use. Only on the user's tap: a Stremio app
+// syncing an older list can drop it from the account (seen on a phone).
+async function addLanToAccount(authKey, { withLocal = false } = {}) {
   const url = lanUrl(lanStatus.ip);
   if (!url) throw new Error('Connect the phone to Wi-Fi first.');
-  const result = await stremioAccount.putAddon(authKey, url, await lanEntryManifest());
+  const manifest = await addonManifest();
+  const entries = [{ transportUrl: url, manifest: lan.lanManifest(manifest) }];
+  if (withLocal) entries.unshift({ transportUrl: `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`, manifest });
+  const result = await stremioAccount.putAddons(authKey, entries);
   patchConfig({ lanAccountUrl: url });
-  console.log('[lan] Stremio account: ' + result);
+  console.log('[lan] Stremio account: ' + result + (withLocal ? ' (with the 127.0.0.1 entry)' : ''));
 }
 
 async function checkLan() {
@@ -458,8 +482,12 @@ function startLan() {
     addonPort: ADDON_INTERNAL_PORT,
     getKey: lanKey,
     isSelf: (address) => !!address && address === lanStatus.ip,
-    dedupeSelf: () => stremioConnected,
+    // Only when this phone's Stremio really uses the 127.0.0.1 entry right
+    // now: "connected" alone can come from the account, and Stremio on a
+    // phone may not show that entry at all.
+    dedupeSelf: () => Date.now() - lastLocalStremio < LOCAL_IN_USE_MS,
     onLocalStremio: () => {
+      lastLocalStremio = Date.now();
       if (stremioConnected) return;
       console.log('[bootstrap] Stremio on this phone is using the addon');
       markStremioConnected();
@@ -488,7 +516,7 @@ async function lanPairingLink() {
     }
     lanStatus = { ...lanStatus, state: 'installing' };
     try {
-      await addLanToAccount(authKey);
+      await addLanToAccount(authKey, { withLocal: true });
       const old = readConfig().stremioAuthKey;
       patchConfig({ stremioAuthKey: authKey });
       if (old && old !== authKey) stremioAccount.logout(old).catch(() => {});

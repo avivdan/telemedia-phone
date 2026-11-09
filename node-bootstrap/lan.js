@@ -31,6 +31,13 @@ function sameKey(given, key) {
 }
 
 const plainAddress = (a) => String(a || '').replace(/^::ffff:/, '');
+
+// "/stream/movie/tt1375666.json" for the log (decoded, shortened).
+function shortPath(path) {
+  let p = path;
+  try { p = decodeURIComponent(path); } catch { /* keep as is */ }
+  return p.length > 100 ? p.slice(0, 100) + '…' : p;
+}
 const isLoopback = (a) => /^127\./.test(plainAddress(a)) || a === '::1';
 
 // RFC 1918 home/office networks (also a phone's own hotspot).
@@ -176,14 +183,20 @@ function createGateway({ port, addonPort, getKey, isSelf, dedupeSelf, onLocalStr
     if (keyed === null) {
       // No (or a wrong) key: only this phone itself.
       if (!isLoopback(from)) return notFound();
-      if (STREMIO_RESOURCE.test(url)) onLocalStremio(url);
+      if (STREMIO_RESOURCE.test(url)) {
+        console.log(`[lan] local ${shortPath(url)}`);
+        onLocalStremio(url);
+      }
       return proxy(req, res, url, null);
     }
 
-    if (DEDUPE_RESOURCE.test(keyed) && isSelf(from) && dedupeSelf()) {
+    const self = isSelf(from);
+    if (DEDUPE_RESOURCE.test(keyed) && self && dedupeSelf()) {
+      console.log(`[lan] self (duplicate of local, empty) ${shortPath(keyed)}`);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify(keyed.startsWith('/stream/') ? { streams: [] } : { metas: [] }));
     }
+    if (STREMIO_RESOURCE.test(keyed)) console.log(`[lan] ${self ? 'self' : 'network'} ${shortPath(keyed)}`);
     // The address the other device used to reach us (it changes with the IP).
     const host = /^[A-Za-z0-9.\-:[\]]{1,80}$/.test(req.headers.host || '') ? req.headers.host : null;
     if (!host) return notFound();

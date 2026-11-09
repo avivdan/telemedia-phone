@@ -65,25 +65,39 @@ async function waitForLink(code, stop = () => false) {
   return null;
 }
 
-// Adds or refreshes one addon (same manifest id = replaced in place, e.g.
-// after an IP change). → 'installed' | 'already-installed'
-async function putAddon(authKey, transportUrl, manifest) {
+// Adds or refreshes addons, one write for all ([{ transportUrl, manifest }];
+// same manifest id = replaced in place, e.g. after an IP change).
+// → 'installed' | 'already-installed'
+async function putAddons(authKey, entries) {
   const before = await api('addonCollectionGet', { type: 'AddonCollectionGet', authKey, update: true });
   const addons = before && before.addons;
   if (!Array.isArray(addons) || addons.length === 0) {
     throw new Error('could not read your Stremio addons, nothing was changed');
   }
-  const next = mergeAddonCollection(addons, transportUrl, manifest);
-  if (!next) return 'already-installed';
+  let next = addons;
+  for (const { transportUrl, manifest } of entries) next = mergeAddonCollection(next, transportUrl, manifest) || next;
+  if (next === addons) return 'already-installed';
   await api('addonCollectionSet', { type: 'AddonCollectionSet', authKey, addons: next });
   const after = await api('addonCollectionGet', { type: 'AddonCollectionGet', authKey, update: true });
   const saved = after && Array.isArray(after.addons) ? after.addons : [];
-  if (!saved.some((a) => a.transportUrl === transportUrl)) throw new Error('Stremio did not save the addon');
+  for (const { transportUrl } of entries) {
+    if (!saved.some((a) => a.transportUrl === transportUrl)) throw new Error('Stremio did not save the addon');
+  }
   if (saved.length < addons.length) throw new Error('Stremio addon list shrank unexpectedly');
   return 'installed';
+}
+
+// The account's addons: name, id and transport host (no paths, so no keys).
+async function listAddons(authKey) {
+  const res = await api('addonCollectionGet', { type: 'AddonCollectionGet', authKey, update: true });
+  return ((res && res.addons) || []).map((a) => {
+    let host = '';
+    try { host = new URL(a.transportUrl).host; } catch { /* not a URL */ }
+    return { name: (a.manifest && a.manifest.name) || '', id: (a.manifest && a.manifest.id) || '', host };
+  });
 }
 
 // Ends a session we no longer need.
 const logout = (authKey) => api('logout', { type: 'Logout', authKey });
 
-module.exports = { createLink, waitForLink, putAddon, logout, isAuthError };
+module.exports = { createLink, waitForLink, putAddons, listAddons, logout, isAuthError };

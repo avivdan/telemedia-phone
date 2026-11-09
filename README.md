@@ -55,10 +55,12 @@ small home server: your own TV, or a friend's.
    **Telemedia (*your name*'s phone)**.
 2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
    the screen off.
-3. **Done with that TV?** Tap **Remove** next to its account in Telemedia. That
+3. **Done with that TV?** Tap **Remove from Stremio account** (once connected,
+   that's the main button; with several accounts it asks which one). That
    deletes Telemedia from that Stremio account and gives your phone a new
    personal key, so that TV can't use your phone anymore. Your other connected
-   accounts (your own TV) get the new key by themselves.
+   accounts (your own TV) get the new key by themselves. **Connect another TV**
+   adds one more account.
 
 The list in Telemedia shows every connected Stremio account. If the phone's
 Wi-Fi address changes (another network, a new IP), Telemedia updates all of

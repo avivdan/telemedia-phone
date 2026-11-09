@@ -364,6 +364,13 @@
                 android:layout_marginTop="16dp"
                 android:text="@string/lan_add" />
 
+            <!-- Shown once connected: the main button then removes. -->
+            <Button
+                android:id="@+id/lan_add_another"
+                style="@style/Telemedia.Button.Secondary"
+                android:text="@string/lan_add_another"
+                android:visibility="gone" />
+
             <Button
                 android:id="@+id/lan_copy"
                 style="@style/Telemedia.Button.Secondary"

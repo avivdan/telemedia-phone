@@ -99,6 +99,9 @@ class MainActivity : Activity() {
     private lateinit var lanQr: ImageView
     private lateinit var lanUrl: TextView
     private lateinit var lanAdd: Button
+    private lateinit var lanAddAnother: Button
+    // Connected Stremio accounts as last shown: the main button removes from them.
+    private var lanAccountsNow = JSONArray()
     private lateinit var lanNote: TextView
     private lateinit var lanError: TextView
     private lateinit var lanQrCaption: TextView
@@ -200,6 +203,7 @@ class MainActivity : Activity() {
         lanQr = findViewById(R.id.lan_qr)
         lanUrl = findViewById(R.id.lan_url)
         lanAdd = findViewById(R.id.lan_add)
+        lanAddAnother = findViewById(R.id.lan_add_another)
         lanNote = findViewById(R.id.lan_note)
         lanError = findViewById(R.id.lan_error)
         lanQrCaption = findViewById(R.id.lan_qr_caption)
@@ -277,13 +281,13 @@ class MainActivity : Activity() {
         stremioOpen.setOnClickListener { Stremio.open(this) }
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
-        // Other devices: connect a TV's Stremio account (link login), or copy the address.
+        // Other devices. Not connected: the main button connects a TV's Stremio
+        // account (link login). Connected: it removes Telemedia from that account
+        // (asking which one if there are several); "Connect another TV" adds one.
         lanAdd.setOnClickListener {
-            action("/lan/link", JSONObject(), lanAdd, lanError) { reply ->
-                if (openLink(reply.getString("link"))) lanOpened = true
-                else showError(lanError, getString(R.string.no_browser))
-            }
+            if (lanAccountsNow.length() == 0) connectTv(lanAdd) else chooseRemove()
         }
+        lanAddAnother.setOnClickListener { connectTv(lanAddAnother) }
         findViewById<Button>(R.id.lan_copy).setOnClickListener {
             val url = shownLanUrl ?: return@setOnClickListener
             getSystemService(ClipboardManager::class.java)
@@ -529,8 +533,14 @@ class MainActivity : Activity() {
         lanQrCaption.setText(if (link.isNotEmpty()) R.string.lan_scan_caption else R.string.lan_address_caption)
         lanUrl.text = qr
         val onWifi = url.isNotEmpty()
-        lanAdd.isEnabled = onWifi && state != "installing" && lanAdd !in inFlight
         val accounts = lan.optJSONArray("accounts") ?: JSONArray()
+        lanAccountsNow = accounts
+        val connected = accounts.length() > 0
+        // Removing works off Wi-Fi too; connecting needs the phone's address.
+        lanAdd.isEnabled = (connected || onWifi) && state != "installing" && lanAdd !in inFlight
+        if (lanAdd !in inFlight) lanAdd.setText(if (connected) R.string.lan_remove_main else R.string.lan_add)
+        lanAddAnother.visibility = if (connected) View.VISIBLE else View.GONE
+        lanAddAnother.isEnabled = onWifi && state != "installing" && lanAddAnother !in inFlight
         val note = when {
             !onWifi -> getString(R.string.lan_no_wifi)
             state == "installing" -> getString(R.string.stremio_installing)
@@ -547,7 +557,30 @@ class MainActivity : Activity() {
         renderLanAccounts(accounts)
     }
 
-    // One row per connected Stremio account: "✓ av…@gmail.com   [Remove]".
+    private fun connectTv(button: Button) {
+        action("/lan/link", JSONObject(), button, lanError) { reply ->
+            if (openLink(reply.getString("link"))) lanOpened = true
+            else showError(lanError, getString(R.string.no_browser))
+        }
+    }
+
+    // "Remove from Stremio account": straight to the confirmation with one
+    // account, a choice first with several.
+    private fun chooseRemove() {
+        val accounts = (0 until lanAccountsNow.length()).map { lanAccountsNow.getJSONObject(it) }
+        if (accounts.isEmpty()) return
+        if (accounts.size == 1) return confirmRemove(accounts[0].optStr("id"), accounts[0].optStr("user"), lanAdd)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.lan_choose_remove)
+            .setItems(accounts.map { it.optStr("user") }.toTypedArray()) { _, which ->
+                confirmRemove(accounts[which].optStr("id"), accounts[which].optStr("user"), lanAdd)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // One line per connected Stremio account: "✓ av…@gmail.com" (the main
+    // button removes).
     private fun renderLanAccounts(accounts: JSONArray) {
         val key = accounts.toString()
         if (key == shownAccounts) return
@@ -572,13 +605,6 @@ class MainActivity : Activity() {
                 setTextColor(getColor(R.color.fg))
                 textSize = 16f
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            val remove = Button(this, null, 0, R.style.Telemedia_Button_Secondary).apply {
-                setText(R.string.lan_remove)
-                minHeight = dp(48)
-                setPadding(dp(18), 0, dp(18), 0)
-            }
-            remove.setOnClickListener { confirmRemove(account.optStr("id"), user, remove) }
-            row.addView(remove, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             lanAccounts.addView(row)
         }
     }

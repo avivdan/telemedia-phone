@@ -67,7 +67,7 @@
 
     <!-- Other devices: this phone as a server for any TV -->
     <string name="lan_title">Use on a TV or computer</string>
-    <string name="lan_intro">Stremio on a TV or computer on the same Wi-Fi can play from this phone. Tap Connect a TV: on the page that opens, log in to that TV\'s Stremio account and confirm. Or the TV\'s owner scans the code with their own phone.</string>
+    <string name="lan_intro">Stremio on a TV or computer on the same Wi-Fi can play from this phone. Tap Connect a TV: on the page that opens, log in to that TV\'s Stremio account and confirm, or the TV\'s owner scans the code with their own phone. Done with that TV? Tap Remove from Stremio account.</string>
     <string name="lan_qr_description">QR code</string>
     <string name="lan_add">Connect a TV</string>
     <string name="lan_copy">Copy address</string>
@@ -76,6 +76,9 @@
     <string name="lan_address_caption">Or add this address in Stremio on the TV (Add-ons, search box):</string>
     <string name="lan_accounts_title">Connected Stremio accounts</string>
     <string name="lan_remove">Remove</string>
+    <string name="lan_remove_main">Remove from Stremio account</string>
+    <string name="lan_add_another">Connect another TV</string>
+    <string name="lan_choose_remove">Remove Telemedia from which Stremio account?</string>
     <string name="lan_remove_confirm">Remove Telemedia from %1$s? The phone gets a new key, so TVs on that account can\'t use it anymore. Your other connected accounts are updated by themselves.</string>
     <string name="lan_removed">Removed ✔ The old address no longer works.</string>
     <string name="lan_connected">Connected to %1$s ✔ Stremio on that TV now lists Telemedia. Keep the phone on this Wi-Fi (and charging) while you watch.</string>

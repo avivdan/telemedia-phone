@@ -128,6 +128,59 @@ the phone's Tailscale IP in the address instead.
 - Telemedia and Telemedia TV can share one Stremio account: each device plays
   from its own Telemedia.
 
+## Testing checklist
+
+Before sharing a new APK. First the automated tests (no network, a few
+seconds):
+
+```bash
+npm test
+```
+
+Then by hand, on a real phone and TV. Each line: what to do → what should
+happen.
+
+**Must pass**
+
+1. **Login** (only with a number that hasn't tried today: Telegram blocks
+   repeated my.telegram.org codes for hours) → phone number, code, two-step
+   password if any → "Logged in", the own API key arrives by itself (about a
+   minute), then the groups step.
+2. **Suggested groups** → tick two, **Join selected** → they show up in
+   Telegram.
+3. **Stremio on the phone** → **Add to Stremio** with the same account as the
+   phone's Stremio app → search a Hebrew title (e.g. החברים של נאור): results
+   in the **חיפוש בעברית** row → an episode plays.
+4. **Connect a TV** → the TV's Stremio lists **Telemedia (*name*'s phone)** →
+   plays on an Android TV and on a smart-TV app (VIDAA / LG / Samsung) → skip
+   forward and back → pause a few minutes and resume.
+5. **Screen off** → phone screen off while the TV plays, 10+ minutes → keeps
+   playing.
+6. **Battery** → *Settings → Apps → Telemedia → Battery*: **Unrestricted**
+   (the app asks once).
+7. **Phone reboot** without opening Telemedia → its notification appears by
+   itself → the TV plays.
+8. **Stop** in the notification → stops → open the app: "Telemedia is
+   stopped" → **Start Telemedia** → back. Stop again, reboot → still stopped.
+9. **Remove** → with a second Stremio account connected (**Connect another
+   TV**, the owner scans the code with their own phone and confirms) →
+   **Remove from Stremio account**, pick it → that TV can't play anymore, even
+   a video it was playing → your own TV still plays (it got the new key).
+
+**Worth checking**
+
+10. **No internet** → airplane mode, open the app → "Waiting for an internet
+    connection…" → airplane mode off → continues by itself.
+11. **New Wi-Fi address** (reconnect, or another router) → TVs keep working
+    within about a minute.
+12. **Remove inside Stremio** → remove "Telemedia (*name*'s phone)" in a TV's
+    Stremio Add-ons → it stays removed (Telemedia forgets that account).
+13. **Log out of Telegram** → the TVs lose Telemedia too (it leaves their
+    Stremio accounts) → log in again (needs a code; mind item 1).
+
+Something wrong with a TV? `adb logcat -s TelemediaNode | grep "\[lan\]"`
+shows each request from other devices (key removed).
+
 ---
 
 ## For developers

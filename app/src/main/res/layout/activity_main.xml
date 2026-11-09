@@ -278,6 +278,12 @@
                 android:visibility="gone" />
 
             <Button
+                android:id="@+id/stremio_open"
+                style="@style/Telemedia.Button.Secondary"
+                android:text="@string/open_stremio"
+                android:visibility="gone" />
+
+            <Button
                 android:id="@+id/stremio_get"
                 style="@style/Telemedia.Button.Secondary"
                 android:text="@string/get_stremio"

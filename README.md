@@ -27,14 +27,16 @@ the phone: no computer, no TV, no second device.
 4. **Suggested groups:** tick the groups and channels you want to join, tap
    **Join selected** (or **Skip**). You can leave them anytime in Telegram.
 5. **Add to Stremio:** tap **Add to Stremio**. A Stremio page opens in the
-   browser: log in with your Stremio account and confirm, then come back to
-   Telemedia.
+   browser: log in with **the same Stremio account as the Stremio app** on
+   this phone (and on your TV), confirm, then come back to Telemedia.
 6. **Allow running in the background** when Android asks, so videos don't stop
    while you watch.
 
 Done. Open Stremio, pick any movie or episode, choose a **Telemedia** stream.
 
 If Telemedia doesn't show up in Stremio yet, close Stremio and open it again.
+Still not there? Stremio on the phone is logged in to another account: tap
+**Add to Stremio again** in Telemedia and log in with that account.
 
 ## Watch on your TV or computer too
 
@@ -43,14 +45,27 @@ PC), like a small home server.
 
 1. In Telemedia, under **Use from another device**, tap **Add to my Stremio
    account** and confirm on the Stremio page. Stremio on every device logged
-   in to that account gets **Telemedia (phone)**.
+   in to **that account** gets **Telemedia (phone)** (check that the TV's
+   Stremio uses the same account).
    Or, in Stremio on the other device, paste the address shown under the QR
    code into the Add-ons search box and install it.
 2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
    the screen off.
 
-The address has a personal key in it (`http://<phone-ip>:7000/<key>/manifest.json`):
-without the key, the phone answers nothing to the network. Don't share it.
+It works in every Stremio app: Android TV, the PC app, web.stremio.com and
+the smart-TV apps (Hisense VIDAA, LG, Samsung). The address looks like
+`https://192-168-0-104.local-ip.sh:7443/<key>/manifest.json`: your phone's
+Wi-Fi IP with dashes, and a personal key. Without the key, the phone answers
+nothing to the network. Don't share it.
+
+Why `local-ip.sh`: Stremio's web-based apps (smart TVs, web.stremio.com)
+only load `https://` add-ons. [local-ip.sh](https://local-ip.sh) is a free
+public service: the name `192-168-0-104.local-ip.sh` simply points to
+192.168.0.104, and it hands out a valid certificate for such names. If
+local-ip.sh can't be reached when the app starts for the first time, the
+address is plain `http://<phone-ip>:7000/<key>/…` instead (fine for the
+Android and PC apps, not for smart-TV apps) and it switches by itself once
+the certificate arrives.
 
 **Give the phone a fixed address.** The address contains the phone's Wi-Fi IP.
 If it changes, Telemedia updates your Stremio account by itself, but it's
@@ -60,9 +75,9 @@ On Android also set *Wi-Fi → your network → Privacy → Use device MAC*, or 
 phone may show up with a new MAC (and IP) after a while.
 
 On a device that runs its own Telemedia (the TV app), you see both: its own
-**Telemedia** and **Telemedia (phone)**. Remove one in Stremio's Add-ons if you
-don't need it. On the PC, use the Stremio desktop app (the web version at
-web.stremio.com can't reach `http://` addresses).
+**Telemedia** and **Telemedia (phone)**. To use only the phone there,
+uninstall the Telemedia TV app. Don't remove **Telemedia** in Stremio's
+Add-ons: that removes it from the whole account, including the phone.
 
 **Outside home?** Not built in. One option: install
 [Tailscale](https://tailscale.com) on the phone and the other device, and use
@@ -81,8 +96,9 @@ the phone's Tailscale IP in the address instead.
 
 - Your Telegram login stays on the phone. It's only sent to Telegram.
 - Other devices on your Wi-Fi can only use Telemedia with the address that
-  has your personal key in it. It travels unencrypted on your Wi-Fi, so use it
-  at home, not on public Wi-Fi.
+  has your personal key in it. The `https` in it does not make it private:
+  local-ip.sh's certificate key is public by design, so treat it like plain
+  http. Use it at home, not on public Wi-Fi.
 - If Telegram says "too many tries", wait a few hours before trying again.
 - Telemedia and Telemedia TV can share one Stremio account: each device plays
   from its own Telemedia.
@@ -109,7 +125,7 @@ MainActivity (UI process)                NodeService (":node" process, foregroun
                                             ├─ login.js   Telegram login on the phone
                                             ├─ setup.js   own API key (starter key → own key)
                                             ├─ groups.js  head-start groups (join on request)
-                                            ├─ lan.js     gateway 0.0.0.0:7000 → addon
+                                            ├─ lan.js     gateway 0.0.0.0:7000 (+ https :7443) → addon
                                             ├─ stremio-account.js  LAN entry in the Stremio account
                                             ├─ tv/stremio-link.js, tv/my-telegram.js (from the TV app)
                                             └─ require(addon dist) → addon on 127.0.0.1:7010
@@ -127,10 +143,29 @@ BootReceiver → starts NodeService on boot, once set up
   holds it next to the 127.0.0.1 entry instead of replacing it. When the
   phone's own Stremio uses the 127.0.0.1 entry, keyed catalog/stream requests
   from the phone itself get empty answers (no duplicates).
+- The same gateway answers HTTPS on 0.0.0.0:7443 with local-ip.sh's public
+  `*.local-ip.sh` certificate (Let's Encrypt; `server.pem`/`server.key`
+  downloaded from local-ip.sh, checked for name, dates and key match, kept in
+  the app's files, refreshed every 6 h when within 20 days of expiry). Once it
+  listens, the advertised address becomes
+  `https://<ip-with-dashes>.local-ip.sh:7443/<key>/manifest.json` and keyed
+  answers carry `https://` stream URLs (scheme and host from the request).
+  Needed because Stremio's web apps only load https add-ons from other
+  devices (mixed content). `OPTIONS` preflights on keyed URLs get CORS and
+  `Access-Control-Allow-Private-Network: true`. The certificate key is public,
+  so this is reachability, not secrecy; the path key is the access control.
+  Routers with DNS-rebinding protection may refuse such names; then use the
+  http address.
 - "Add to my Stremio account" (`stremio-account.js`) is the link login again,
   but the Stremio session key is kept (app-private) so that when the Wi-Fi IP
-  changes the entry is replaced in place. If that session stops working, the
-  app asks to add it again.
+  (or http → https) changes the entry is replaced in place. If that session
+  stops working, the app asks to add it again. It also re-adds the 127.0.0.1
+  entry: the first "Add to Stremio" goes to whatever account is logged in on
+  the Stremio web page, which may not be the account of the phone's Stremio
+  app (seen in testing). The app only shows "All set" once Stremio on the
+  phone actually calls Telemedia (127.0.0.1 or its LAN address).
+- Every request from the network is logged (`[lan] from <ip>: METHOD path`,
+  key removed): `adb logcat -s TelemediaNode | grep "\[lan\]"`.
 - While a video streams, `NodeService` holds a partial wake lock and a Wi-Fi
   lock (it polls `activeStreams` in `/status`).
 

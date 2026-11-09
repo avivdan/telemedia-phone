@@ -1,7 +1,8 @@
 // Entry point run by nodejs-mobile inside the Telemedia phone app.
 //
 // argv[2] = absolute path to config.json in the app's private files dir.
-// config.json: { apiId, apiHash, session?, stremioConnected?, groupsDone? }
+// config.json: { apiId, apiHash, session?, stremioAdded?, stremioConnected?,
+//                groupsDone?, lanKey?, lanAccountUrl?, stremioAuthKey? }
 //
 // Flow (everything on this one phone):
 //   1. Control server on 127.0.0.1:7001 for the app screen (GET /status and
@@ -37,6 +38,7 @@ const stremioAccount = require('./stremio-account');
 
 const CONTROL_PORT = 7001;
 const PUBLIC_PORT = 7000; // the gateway (lan.js): this phone and the LAN
+const TLS_PORT = 7443; // the gateway on HTTPS, for web-based Stremio apps (lan.js)
 const ADDON_INTERNAL_PORT = 7010; // the addon itself, 127.0.0.1 only
 const MAX_BODY = 8192;
 const STREMIO_PAIRING_MS = 20 * 60 * 1000; // stop polling Stremio after this
@@ -92,6 +94,10 @@ function patchConfig(patch) {
   return cfg;
 }
 
+// stremioAdded: "Add to Stremio" put Telemedia into the account confirmed on
+// the Stremio web page. stremioConnected: Stremio on this phone really asks
+// Telemedia (the two differ when the web page used another account).
+let stremioAdded = !!readConfig().stremioAdded;
 let stremioConnected = !!readConfig().stremioConnected;
 
 function setStatus(next) {
@@ -221,6 +227,7 @@ function startControlServer() {
         ...status,
         stremio: stremioStatus,
         stremioConnected,
+        stremioAdded,
         groups: groupsStatus,
         groupsCount: groupList().length,
         lan: status.state === 'running' ? lanStatus : null,
@@ -410,7 +417,9 @@ function startAddon(cfg) {
 // ---------------------------------------------------------------------------
 const LAN_CHECK_MS = 15_000;
 const LAN_RETRY_MS = 2 * 60_000;
+const CERT_CHECK_MS = 6 * 60 * 60_000;
 let gateway = null;
+let certStore = null;
 let lanStatus = { ip: null, url: null, state: 'idle', inAccount: false, needsReadd: false };
 let lanPairing = null; // the newest link login; older ones stop
 let lanRefreshAt = 0;
@@ -426,7 +435,15 @@ function lanKey() {
   return key;
 }
 
-const lanUrl = (ip) => (ip ? `http://${ip}:${PUBLIC_PORT}/${lanKey()}/manifest.json` : null);
+// The address other devices use. HTTPS (local-ip.sh name) once the
+// certificate is there: it works in every Stremio app, including the
+// web-based ones on smart TVs; plain http only in the native apps.
+function lanUrl(ip) {
+  if (!ip) return null;
+  return gateway && gateway.tlsActive()
+    ? `https://${lan.tlsHostname(ip)}:${TLS_PORT}/${lanKey()}/manifest.json`
+    : `http://${ip}:${PUBLIC_PORT}/${lanKey()}/manifest.json`;
+}
 
 async function addonManifest() {
   const res = await fetch(`http://127.0.0.1:${ADDON_INTERNAL_PORT}/manifest.json`);
@@ -435,8 +452,10 @@ async function addonManifest() {
 
 // Puts the current LAN address into the account behind authKey.
 // withLocal: also (re-)add the 127.0.0.1 entry, which Stremio on this phone
-// and on a TV running Telemedia use. Only on the user's tap: a Stremio app
-// syncing an older list can drop it from the account (seen on a phone).
+// and on a TV running Telemedia use. Only on the user's tap ("Add to my
+// Stremio account"): the first "Add to Stremio" may have gone to another
+// account (the one logged in on the Stremio web page), so make sure this one
+// has both.
 async function addLanToAccount(authKey, { withLocal = false } = {}) {
   const url = lanUrl(lanStatus.ip);
   if (!url) throw new Error('Connect the phone to Wi-Fi first.');
@@ -452,7 +471,7 @@ async function checkLan() {
   const ip = await lan.lanAddress().catch(() => null);
   if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? 'is now ' + ip : 'gone'));
   const url = lanUrl(ip);
-  lanStatus = { ...lanStatus, ip, url };
+  lanStatus = { ...lanStatus, ip, url, secure: !!url && url.startsWith('https:') };
   const cfg = readConfig();
   // The address changed since it was added to Stremio: update the account.
   if (url && cfg.lanAccountUrl && cfg.lanAccountUrl !== url && Date.now() > lanRefreshAt) {
@@ -492,9 +511,35 @@ function startLan() {
       console.log('[bootstrap] Stremio on this phone is using the addon');
       markStremioConnected();
     },
+    // Stremio on this phone using the LAN entry counts too.
+    onSelfStremio: () => {
+      if (stremioConnected) return;
+      console.log('[bootstrap] Stremio on this phone is using the addon (LAN entry)');
+      markStremioConnected();
+    },
+    tlsPort: TLS_PORT,
   });
+  certStore = lan.createCertStore(path.dirname(cfgPath));
+  if (certStore.get()) gateway.setTls(certStore.get());
+  refreshCert();
+  setInterval(refreshCert, CERT_CHECK_MS);
   checkLan().catch(() => {});
   setInterval(() => checkLan().catch(() => {}), LAN_CHECK_MS);
+}
+
+// The HTTPS certificate from local-ip.sh (lan.js); without it, other
+// devices get the plain http address.
+function refreshCert() {
+  certStore
+    .refresh()
+    .then((changed) => {
+      if (!changed && gateway.tlsActive()) return;
+      gateway.setTls(certStore.get());
+      console.log('[lan] https certificate ' + (changed ? 'updated' : 'loaded'));
+      // Advertise the https address (and update the account) once listening.
+      setTimeout(() => checkLan().catch(() => {}), 1500);
+    })
+    .catch((err) => console.log('[lan] no https certificate yet: ' + messageOf(err)));
 }
 
 // "Add to my Stremio account" for other devices: a link.stremio.com link;
@@ -534,6 +579,11 @@ async function lanPairingLink() {
 // Stremio pairing (stremio-link.js): started by the "Add to Stremio" button,
 // stops polling after a while if the user never confirms.
 // ---------------------------------------------------------------------------
+function markStremioAdded() {
+  stremioAdded = true;
+  if (!readConfig().stremioAdded) patchConfig({ stremioAdded: true });
+}
+
 function markStremioConnected() {
   stremioConnected = true;
   if (!readConfig().stremioConnected) patchConfig({ stremioConnected: true });
@@ -547,7 +597,7 @@ async function stremioPairingLink() {
       .run({
         isConnected: () => stremioConnected || Date.now() > stremioUntil,
         whenAddonReady: () => addonReady,
-        markConnected: markStremioConnected,
+        markConnected: markStremioAdded,
         onStatus: (s) => {
           stremioStatus = s;
           console.log('[bootstrap] stremio=' + s.state);

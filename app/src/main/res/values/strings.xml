@@ -49,7 +49,9 @@
 
     <!-- Step 3: Stremio -->
     <string name="stremio_title">3 · Add to Stremio</string>
-    <string name="stremio_intro">Opens Stremio\'s website: log in with your Stremio account there and confirm. Then come back here.</string>
+    <string name="stremio_intro">Opens Stremio\'s website: log in there with the same Stremio account as the Stremio app on this phone (and your TV), and confirm. Then come back here.</string>
+    <string name="stremio_added">Added to your Stremio account ✔ Now open Stremio on this phone. If Telemedia isn\'t there, Stremio on this phone uses another account: tap Add to Stremio again and log in with that one.</string>
+    <string name="stremio_add_again">Add to Stremio again</string>
     <string name="stremio_add">Add to Stremio</string>
     <string name="stremio_waiting">Waiting for you to confirm on the Stremio page…</string>
     <string name="stremio_installing">Adding Telemedia to your Stremio account…</string>

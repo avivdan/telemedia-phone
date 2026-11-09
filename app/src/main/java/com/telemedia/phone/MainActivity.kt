@@ -89,6 +89,7 @@ class MainActivity : Activity() {
     private lateinit var stremioAdd: Button
     private lateinit var stremioNote: TextView
     private lateinit var stremioGet: Button
+    private lateinit var stremioOpen: Button
     private lateinit var stremioError: TextView
     private lateinit var doneCard: View
     private lateinit var doneText: TextView
@@ -179,6 +180,7 @@ class MainActivity : Activity() {
         stremioAdd = findViewById(R.id.stremio_add)
         stremioNote = findViewById(R.id.stremio_note)
         stremioGet = findViewById(R.id.stremio_get)
+        stremioOpen = findViewById(R.id.stremio_open)
         stremioError = findViewById(R.id.stremio_error)
         doneCard = findViewById(R.id.done_card)
         doneText = findViewById(R.id.done_text)
@@ -258,6 +260,7 @@ class MainActivity : Activity() {
             }
         }
         stremioGet.setOnClickListener { Stremio.openStoreListing(this) }
+        stremioOpen.setOnClickListener { Stremio.open(this) }
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
         // Other devices: the LAN address into the Stremio account, or copy it.
@@ -371,7 +374,7 @@ class MainActivity : Activity() {
             }
             !s.optBoolean("stremioConnected") -> {
                 visible += stremioCard
-                renderStremio(s.optJSONObject("stremio") ?: JSONObject())
+                renderStremio(s.optJSONObject("stremio") ?: JSONObject(), s.optBoolean("stremioAdded"))
             }
             else -> {
                 visible += doneCard
@@ -495,16 +498,21 @@ class MainActivity : Activity() {
         return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
     }
 
-    private fun renderStremio(stremio: JSONObject) {
+    // added: Telemedia is in the account confirmed on the web page, but Stremio
+    // on this phone hasn't asked for it yet (maybe it uses another account).
+    private fun renderStremio(stremio: JSONObject, added: Boolean) {
+        val installed = Stremio.installedPackage(this) != null
         val note = when (stremio.optStr("state")) {
             "installing" -> getString(R.string.stremio_installing)
             "waiting" -> if (stremioOpened) getString(R.string.stremio_waiting) else ""
             "error" -> "Couldn't add it yet: " + stremio.optStr("error")
-            else -> ""
+            else -> if (added) getString(R.string.stremio_added) else ""
         }
         stremioNote.text = note
         stremioNote.visibility = if (note.isEmpty()) View.GONE else View.VISIBLE
-        stremioGet.visibility = if (Stremio.installedPackage(this) == null) View.VISIBLE else View.GONE
+        stremioAdd.setText(if (added) R.string.stremio_add_again else R.string.stremio_add)
+        stremioOpen.visibility = if (added && installed) View.VISIBLE else View.GONE
+        stremioGet.visibility = if (!installed) View.VISIBLE else View.GONE
         setError(stremioError, "")
     }
 

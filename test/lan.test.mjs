@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -55,6 +56,15 @@ before(async () => {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify({ streams: [{ url: `http://127.0.0.1:${port}/stream/-100123/45/a.mkv` }] }));
       }
+      // A chat document that is a web page: must never open as one.
+      if (req.url.startsWith('/stream/-100123/66')) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end('<script>alert(1)</script>');
+      }
+      if (req.url.startsWith('/meta/movie/tg')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ meta: { id: 'tg:-100123:45', name: 'x' } }));
+      }
       if (req.url.startsWith('/stream/-100123/45')) {
         res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Range': 'bytes 0-3/10' });
         return res.end('abcd');
@@ -83,6 +93,7 @@ before(async () => {
     dedupeSelf: () => true,
     onLocalStremio: () => localStremio++,
   });
+  for (const msg of [77, 99, 66]) gateway.allowlist.allow('-100123', msg);
   await new Promise((r) => gateway.server.on('listening', r));
 });
 
@@ -183,6 +194,57 @@ test('after a new key, transfers that started with the old one are cut', async (
   await new Promise((r) => setTimeout(r, 150));
   gateway.dropKeyed();
   assert.equal(await done, false);
+});
+
+test('only videos and messages the addon offered can be opened', async () => {
+  const host = { Host: `192.168.1.20:${port}` };
+  // never offered: a guessed message number, a username, an id in a chat
+  assert.equal((await get('127.0.0.1', `/${KEY}/stream/-100123/12345/a.mkv`, host)).status, 404);
+  assert.equal((await get('127.0.0.1', `/${KEY}/stream/somechannel/45/a.mkv`, host)).status, 404);
+  assert.equal((await get('127.0.0.1', `/${KEY}/meta/movie/tg%3A-100555%3A7.json`, host)).status, 404);
+  assert.equal((await get('127.0.0.1', '/stream/-100123/12345/a.mkv')).status, 404);
+  // offered by a stream list (45 is in /stream/movie/tt1.json): plays, and its
+  // message can be looked at
+  await get('127.0.0.1', '/stream/movie/tt1.json');
+  assert.equal((await get('127.0.0.1', `/${KEY}/stream/-100123/45/a.mkv`, host)).status, 206);
+  assert.equal((await get('127.0.0.1', `/${KEY}/meta/movie/tg%3A-100123%3A45.json`, host)).status, 200);
+});
+
+test('a broken address is refused, and the gateway keeps running', async () => {
+  assert.equal((await get('127.0.0.1', '/stream/%E0%A4%A/1')).status, 400);
+  assert.equal((await get('127.0.0.1', `/${KEY}/stream/%ZZ/45/a.mkv`, { Host: `192.168.1.20:${port}` })).status, 400);
+  assert.equal((await get('127.0.0.1', '/manifest.json')).status, 200);
+});
+
+test('nothing it answers can run as a page', async () => {
+  const m = await get('127.0.0.1', '/manifest.json');
+  assert.equal(m.headers['x-content-type-options'], 'nosniff');
+  assert.match(m.headers['content-security-policy'], /sandbox/);
+  const doc = await get('127.0.0.1', '/stream/-100123/66/page.html');
+  assert.equal(doc.headers['content-type'], 'application/octet-stream');
+  assert.equal(doc.headers['content-disposition'], 'attachment');
+  assert.match(doc.headers['content-security-policy'], /sandbox/);
+  const video = await get('127.0.0.1', '/stream/-100123/45/a.mkv');
+  assert.equal(video.headers['content-type'], 'video/x-matroska');
+});
+
+test('the list of offered videos: learned from answers, kept on disk, capped', async () => {
+  const fs = await import('node:fs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'telemedia-allow-'));
+  const file = path.join(dir, 'media.json');
+  const a = lan.createMediaAllowlist(file);
+  a.harvest(JSON.stringify({ streams: [{ url: 'http://127.0.0.1:7000/stream/-1001/22/v.mp4' }], metas: [{ id: 'tg:-1001:23' }, { id: 'tgchat:-1009' }] }));
+  assert.equal(a.check('/stream/-1001/22/v.mp4'), null);
+  assert.equal(a.check('/stream/movie/tg%3A-1001%3A23.json'), null);
+  assert.equal(a.check('/meta/series/tgchat%3A-1009.json'), null);
+  assert.equal(a.check('/stream/-1001/24/v.mp4'), 'not offered');
+  assert.equal(a.check('/stream/movie/tt0111161.json'), null);
+  a.flush();
+  const b = lan.createMediaAllowlist(file);
+  assert.equal(b.check('/stream/-1001/22/v.mp4'), null);
+  b.clear();
+  assert.equal(lan.createMediaAllowlist(file).check('/stream/-1001/22/v.mp4'), 'not offered');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('key and address helpers', () => {

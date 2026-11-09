@@ -280,6 +280,15 @@ BootReceiver → starts NodeService on boot, once set up
   browser pages on the phone are refused (only Stremio's own web origins may
   call it), and so are other host names. Other *apps* on the phone can still
   use it, as with the TV app (Stremio needs it keyless).
+- **Only offered videos.** The gateway lets a video (or a message's details)
+  through only if the addon itself handed it out: a stream link, a catalog
+  or a group's video list (`createMediaAllowlist` in `lan.js`, kept in the
+  app's files so a resumed video still plays). Guessed message numbers get
+  404: the addon's own lookup would otherwise fall back to all of the
+  account's chats, private ones included. Every answer carries
+  `X-Content-Type-Options: nosniff` and a `sandbox` CSP, non-video files are
+  sent as downloads, addresses with broken percent-encoding get 400, and an
+  unexpected error is logged instead of ending the process.
 - **Stop Telemedia** stops the service; the `:node` process ends in
   `onDestroy`, and a `stopped` flag file keeps it stopped (boot receiver,
   opening the app) until Start/Restart.

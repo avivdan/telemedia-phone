@@ -297,8 +297,14 @@ class MainActivity : Activity() {
         lanAddAnother.setOnClickListener { connectTv(lanAddAnother) }
         findViewById<Button>(R.id.lan_copy).setOnClickListener {
             val url = shownLanUrl ?: return@setOnClickListener
-            getSystemService(ClipboardManager::class.java)
-                ?.setPrimaryClip(ClipData.newPlainText(getString(R.string.app_name), url))
+            val clip = ClipData.newPlainText(getString(R.string.app_name), url)
+            // The address holds the key: Android 13+ hides it from the clipboard preview.
+            if (Build.VERSION.SDK_INT >= 33) {
+                clip.description.extras = android.os.PersistableBundle().apply {
+                    putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+            getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
             Toast.makeText(this, R.string.lan_copied, Toast.LENGTH_SHORT).show()
         }
 

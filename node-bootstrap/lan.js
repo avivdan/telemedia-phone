@@ -208,6 +208,112 @@ function createCertStore(dir, source = CERT_SOURCE) {
   return { get: () => current, refresh };
 }
 
+// ---------------------------------------------------------------------------
+// Which Telegram messages may be played or opened through the gateway: only
+// the ones the addon itself handed out (stream links, catalog and meta
+// items). Without this, anyone who can reach the addon (another app on the
+// phone, a connected TV) could ask for any message number, and the addon's
+// lookup falls back to all of the account's chats, private ones included.
+// Kept in the app's files, so a resumed video still plays after a restart.
+// ---------------------------------------------------------------------------
+const MAX_ALLOWED_MSGS = 20_000;
+const MAX_ALLOWED_CHATS = 2_000;
+
+function createMediaAllowlist(file = null) {
+  const msgs = new Set(); // "chatId:messageId"
+  const chats = new Set(); // "chatId"
+  let dirty = false;
+  let timer = null;
+  if (file) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const m of saved.msgs || []) msgs.add(String(m));
+      for (const c of saved.chats || []) chats.add(String(c));
+    } catch {
+      // nothing saved yet
+    }
+  }
+  const save = () => {
+    timer = null;
+    if (!dirty || !file) return;
+    dirty = false;
+    try {
+      fs.writeFileSync(file, JSON.stringify({ msgs: [...msgs], chats: [...chats] }));
+    } catch (err) {
+      console.log('[lan] could not save the media list: ' + err.message);
+    }
+  };
+  // Newest last; the oldest go first when the list is full.
+  const add = (set, value, max) => {
+    if (set.has(value)) {
+      set.delete(value);
+    } else {
+      dirty = true;
+    }
+    set.add(value);
+    while (set.size > max) set.delete(set.values().next().value);
+    if (dirty && file && !timer) timer = setTimeout(save, 10_000);
+  };
+  // Learn from one addon answer (its JSON text).
+  function harvest(body) {
+    for (const m of String(body).matchAll(/\/stream\/(-?\d+)\/(\d+)\//g)) add(msgs, `${m[1]}:${m[2]}`, MAX_ALLOWED_MSGS);
+    for (const m of String(body).matchAll(/"tg:(-?\d+):(\d+)"/g)) add(msgs, `${m[1]}:${m[2]}`, MAX_ALLOWED_MSGS);
+    for (const m of String(body).matchAll(/"tgchat:(-?\d+)"/g)) add(chats, m[1], MAX_ALLOWED_CHATS);
+  }
+  // null when the request may go to the addon, else why not. Expects a path
+  // whose percent-encoding is valid (checked before).
+  function check(path) {
+    const p = path.split('?')[0];
+    // The video itself: /stream/<chatId>/<messageId>/<file>
+    let m = /^\/stream\/([^/]+)\/(\d+)(?:\/[^/]*)?$/.exec(p);
+    if (m && !p.endsWith('.json')) {
+      const chat = decodeURIComponent(m[1]);
+      return /^-?\d+$/.test(chat) && msgs.has(`${chat}:${m[2]}`) ? null : 'not offered';
+    }
+    // Stremio resources about one Telegram message or chat.
+    m = /^\/(meta|stream|subtitles)\/[^/]+\/([^/]+)\.json$/.exec(p);
+    if (m) {
+      const id = decodeURIComponent(m[2]);
+      let t = /^tg:(-?\d+):(\d+)$/.exec(id);
+      if (t) return msgs.has(`${t[1]}:${t[2]}`) ? null : 'not offered';
+      t = /^tgchat:(-?\d+)(?::ep(\d+))?$/.exec(id);
+      if (t) return chats.has(t[1]) || (t[2] && msgs.has(`${t[1]}:${t[2]}`)) ? null : 'not offered';
+      if (/^tg/i.test(id)) return 'not offered';
+    }
+    return null;
+  }
+  function clear() {
+    msgs.clear();
+    chats.clear();
+    dirty = true;
+    save();
+  }
+  return {
+    harvest,
+    check,
+    clear,
+    flush: save,
+    allow: (chat, msg) => add(msgs, `${chat}:${msg}`, MAX_ALLOWED_MSGS),
+    size: () => msgs.size,
+  };
+}
+
+// Valid percent-encoding? (A malformed one used to crash the whole addon.)
+function decodablePath(url) {
+  try {
+    decodeURIComponent(String(url).split('?')[0]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// On every answer: never treated as a page that could run code.
+const SAFE_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "sandbox; default-src 'none'",
+};
+
 // The gateway. getKey() → the personal key; isSelf(address) → true for this
 // phone's own LAN address; dedupeSelf() → true while this phone's Stremio
 // uses the 127.0.0.1 entry (then the keyed entry answers the phone itself with
@@ -217,13 +323,15 @@ function createCertStore(dir, source = CERT_SOURCE) {
 // activeStreams() → video transfers in progress (for wake/Wi-Fi locks).
 // setTls({ cert, key }) starts (or renews) the HTTPS side on tlsPort.
 // lanManifest(manifest) → the manifest other devices see (default: lanManifest).
+// allowlistFile: where the list of offered videos is kept (createMediaAllowlist).
 function createGateway({
   port, tlsPort, addonPort, getKey, isSelf, dedupeSelf, onLocalStremio,
-  onSelfStremio = () => {}, lanManifest: manifestFor = lanManifest,
+  onSelfStremio = () => {}, lanManifest: manifestFor = lanManifest, allowlistFile = null,
 }) {
   const localBase = `http://127.0.0.1:${port}`;
   let streams = 0;
   const keyedOpen = new Set(); // answers in progress on the keyed address
+  const allowlist = createMediaAllowlist(allowlistFile);
 
   // cors: answers for other devices' browsers (web-based Stremio apps) carry
   // CORS headers on every response, video included (the addon's own video
@@ -236,7 +344,7 @@ function createGateway({
       }
       : {};
     const headers = { ...req.headers, host: `127.0.0.1:${addonPort}` };
-    if (rewrite) delete headers['accept-encoding']; // need a plain body to rewrite
+    delete headers['accept-encoding']; // plain JSON bodies: rewritten and/or read for the media list
     const isVideo = /^\/stream\/[^/]+\/\d+/.test(path) && !/\.json$/.test(path.split('?')[0]);
     if (isVideo) streams++;
     let counted = isVideo;
@@ -251,17 +359,18 @@ function createGateway({
       (ur) => {
         if (isVideo && onVideo) onVideo(ur.statusCode);
         const type = String(ur.headers['content-type'] || '');
-        if (rewrite && ur.statusCode === 200 && /json/.test(type)) {
+        if (ur.statusCode === 200 && /json/.test(type)) {
           const chunks = [];
           ur.on('data', (c) => chunks.push(c));
           ur.on('end', () => {
             let body = Buffer.concat(chunks).toString('utf8');
+            allowlist.harvest(body);
             try {
-              body = rewrite(path.split('?')[0], body);
+              if (rewrite) body = rewrite(path.split('?')[0], body);
             } catch (err) {
               console.log('[lan] rewrite failed: ' + err.message);
             }
-            const out = { ...corsHeaders, ...ur.headers, 'content-length': Buffer.byteLength(body) };
+            const out = { ...corsHeaders, ...ur.headers, ...SAFE_HEADERS, 'content-length': Buffer.byteLength(body) };
             delete out['content-encoding'];
             delete out['transfer-encoding'];
             res.writeHead(ur.statusCode, out);
@@ -279,7 +388,14 @@ function createGateway({
           });
           return;
         }
-        res.writeHead(ur.statusCode, { ...corsHeaders, ...ur.headers });
+        const out = { ...corsHeaders, ...ur.headers, ...SAFE_HEADERS };
+        // Videos stay videos; anything else is only ever a download (a
+        // document from a chat must not open as a page).
+        if (isVideo && !/^(video|audio)\//i.test(type)) {
+          out['content-type'] = 'application/octet-stream';
+          out['content-disposition'] = 'attachment';
+        }
+        res.writeHead(ur.statusCode, out);
         // pipeline, not pipe: when the addon's video download stops early
         // (a Telegram error mid-file), the player's connection is reset, so it
         // retries instead of waiting on a half-sent response.
@@ -305,8 +421,18 @@ function createGateway({
     const url = req.url || '/';
     const from = plainAddress(req.socket.remoteAddress);
     const notFound = () => {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.writeHead(404, { 'Content-Type': 'text/plain', ...SAFE_HEADERS });
       res.end('Not found');
+    };
+    if (!decodablePath(url)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain', ...SAFE_HEADERS });
+      return res.end('Bad request');
+    }
+    // Only messages the addon handed out (see createMediaAllowlist).
+    const offered = (path) => {
+      const why = allowlist.check(path);
+      if (why) console.log(`[lan] refused ${shortPath(path.split('/').slice(0, 3).join('/'))}…: ${why}`);
+      return !why;
     };
 
     const keyed = stripKey(url, getKey());
@@ -344,6 +470,7 @@ function createGateway({
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         return res.end('Forbidden');
       }
+      if (!offered(url)) return notFound();
       if (STREMIO_RESOURCE.test(url)) {
         console.log(`[lan] local ${shortPath(url)}`);
         onLocalStremio(url);
@@ -351,6 +478,7 @@ function createGateway({
       return proxy(req, res, url, null);
     }
 
+    if (!offered(keyed)) return notFound();
     const self = isSelf(from);
     if (DEDUPE_RESOURCE.test(keyed) && self && dedupeSelf()) {
       console.log(`[lan] self (duplicate of local, empty) ${shortPath(keyed)}`);
@@ -404,6 +532,7 @@ function createGateway({
     server,
     setTls,
     dropKeyed,
+    allowlist,
     tlsActive: () => !!(tlsServer && tlsServer.listening),
     tlsServer: () => tlsServer,
     activeStreams: () => streams,
@@ -411,6 +540,8 @@ function createGateway({
 }
 
 module.exports = {
+  createMediaAllowlist,
+  decodablePath,
   accountTargetUrl,
   checkCert,
   createCertStore,

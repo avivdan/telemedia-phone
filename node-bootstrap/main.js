@@ -54,6 +54,15 @@ const DEV_DIR = process.argv[4] || '';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const messageOf = (err) => String(err && err.message ? err.message : err);
 
+// One bad request or a stray promise must not take the whole app down (the
+// addon, the gateway and the login all live in this one process).
+process.on('uncaughtException', (err) => {
+  console.error('[bootstrap] unexpected error (kept running): ' + (err && err.stack ? err.stack : err));
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[bootstrap] unhandled rejection (kept running): ' + messageOf(err));
+});
+
 let status = { state: 'starting' };
 let login = null; // createLogin() while state is need_login
 let configSetup = null; // need_config actions
@@ -226,7 +235,10 @@ const actions = {
     patchConfig({
       session: undefined, groupsDone: undefined, stremioLinks: undefined, ownerName: undefined, lanKey: lan.newKey(),
     });
-    if (gateway) gateway.dropKeyed();
+    if (gateway) {
+      gateway.dropKeyed();
+      gateway.allowlist.clear(); // the next account's chats are different
+    }
   },
 
   // The app asks us to stop; it starts a fresh process right after.
@@ -777,6 +789,7 @@ function startLan() {
     addonPort: ADDON_INTERNAL_PORT,
     getKey: lanKey,
     lanManifest: myLanManifest,
+    allowlistFile: path.join(path.dirname(cfgPath), 'media-allowlist.json'),
     isSelf: (address) => !!address && address === lanStatus.ip,
     // Only when this phone's Stremio really uses the 127.0.0.1 entry right
     // now: "connected" alone can come from the account, and Stremio on a

@@ -45,7 +45,7 @@ Still not there? Stremio on the phone is logged in to another account: tap
 The phone can serve Stremio on any TV or computer on the same Wi-Fi, like a
 small home server: your own TV, or a friend's.
 
-1. In Telemedia, under **Use on a TV or computer**, tap **Connect a TV**.
+1. In Telemedia, under **Watch on a TV or computer**, tap **Connect a TV**.
    Then either:
    - log in to **that TV's Stremio account** on the page that opens and
      confirm, or
@@ -55,12 +55,13 @@ small home server: your own TV, or a friend's.
    **Telemedia (*your name*'s phone)**.
 2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
    the screen off.
-3. **Done with that TV?** Tap **Remove from Stremio account** (once connected,
-   that's the main button; with several accounts it asks which one). That
-   deletes Telemedia from that Stremio account and gives your phone a new
-   personal key, so that TV can't use your phone anymore. Your other connected
-   accounts (your own TV) get the new key by themselves. **Connect another TV**
-   adds one more account.
+3. **Done with that TV?** Find its account under **Connected Stremio
+   accounts** (the bottom of that card) and tap **Remove from Stremio
+   account**, right below it. That deletes Telemedia from that Stremio account,
+   ends the phone's session in it and gives your phone a new personal key, so
+   that TV can't use your phone anymore. Your other connected accounts (your
+   own TV) get the new key by themselves. **Connect another TV** (the main
+   button once one is connected) adds one more account.
 
 The list in Telemedia shows every connected Stremio account. If the phone's
 Wi-Fi address changes (another network, a new IP), Telemedia updates all of
@@ -165,7 +166,7 @@ happen.
    stopped" → **Start Telemedia** → back. Stop again, reboot → still stopped.
 9. **Remove** → with a second Stremio account connected (**Connect another
    TV**, the owner scans the code with their own phone and confirms) →
-   **Remove from Stremio account**, pick it → that TV can't play anymore, even
+   **Remove from Stremio account** under that account → that TV can't play anymore, even
    a video it was playing → your own TV still plays (it got the new key).
 
 **Worth checking**

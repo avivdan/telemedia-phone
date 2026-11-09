@@ -27,6 +27,7 @@ import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.util.TypedValue
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -99,8 +100,7 @@ class MainActivity : Activity() {
     private lateinit var lanQr: ImageView
     private lateinit var lanUrl: TextView
     private lateinit var lanAdd: Button
-    private lateinit var lanAddAnother: Button
-    // Connected Stremio accounts as last shown: the main button removes from them.
+    // Connected Stremio accounts as last shown, each with its own Remove button.
     private var lanAccountsNow = JSONArray()
     private lateinit var lanNote: TextView
     private lateinit var lanError: TextView
@@ -119,6 +119,10 @@ class MainActivity : Activity() {
     private var shownLanUrl: String? = null
     private var shownLanQr: String? = null
     private var shownAccounts: String? = null
+    // Accounts being removed right now: their buttons say "Please wait…".
+    private val removing = mutableSetOf<String>()
+    // A removal that failed: its message, shown in that account's box.
+    private val removeErrors = mutableMapOf<String, String>()
     private var manualKeys = false
     private var configCodeShown = false
     private var shownGroups: String? = null
@@ -208,7 +212,6 @@ class MainActivity : Activity() {
         lanQr = findViewById(R.id.lan_qr)
         lanUrl = findViewById(R.id.lan_url)
         lanAdd = findViewById(R.id.lan_add)
-        lanAddAnother = findViewById(R.id.lan_add_another)
         lanNote = findViewById(R.id.lan_note)
         lanError = findViewById(R.id.lan_error)
         lanQrCaption = findViewById(R.id.lan_qr_caption)
@@ -288,13 +291,10 @@ class MainActivity : Activity() {
         stremioOpen.setOnClickListener { Stremio.open(this) }
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
-        // Other devices. Not connected: the main button connects a TV's Stremio
-        // account (link login). Connected: it removes Telemedia from that account
-        // (asking which one if there are several); "Connect another TV" adds one.
-        lanAdd.setOnClickListener {
-            if (lanAccountsNow.length() == 0) connectTv(lanAdd) else chooseRemove()
-        }
-        lanAddAnother.setOnClickListener { connectTv(lanAddAnother) }
+        // Other devices: the main button connects a TV's Stremio account (link
+        // login), "Connect a TV" and then "Connect another TV". Removing is
+        // right under each account in the list (renderLanAccounts).
+        lanAdd.setOnClickListener { connectTv(lanAdd) }
         findViewById<Button>(R.id.lan_copy).setOnClickListener {
             val url = shownLanUrl ?: return@setOnClickListener
             val clip = ClipData.newPlainText(getString(R.string.app_name), url)
@@ -565,11 +565,9 @@ class MainActivity : Activity() {
         val accounts = lan.optJSONArray("accounts") ?: JSONArray()
         lanAccountsNow = accounts
         val connected = accounts.length() > 0
-        // Removing works off Wi-Fi too; connecting needs the phone's address.
-        lanAdd.isEnabled = (connected || onWifi) && state != "installing" && lanAdd !in inFlight
-        if (lanAdd !in inFlight) lanAdd.setText(if (connected) R.string.lan_remove_main else R.string.lan_add)
-        lanAddAnother.visibility = if (connected) View.VISIBLE else View.GONE
-        lanAddAnother.isEnabled = onWifi && state != "installing" && lanAddAnother !in inFlight
+        // Connecting needs the phone's Wi-Fi address (removing works without).
+        lanAdd.isEnabled = onWifi && state != "installing" && lanAdd !in inFlight
+        if (lanAdd !in inFlight) lanAdd.setText(if (connected) R.string.lan_add_another else R.string.lan_add)
         val doneUser = pairing.optStr("user")
         val stillConnected = (0 until accounts.length()).any { accounts.getJSONObject(it).optStr("user") == doneUser }
         // Problems first; "Connected to …" only while that account is still listed.
@@ -596,63 +594,132 @@ class MainActivity : Activity() {
         }
     }
 
-    // "Remove from Stremio account": straight to the confirmation with one
-    // account, a choice first with several.
-    private fun chooseRemove() {
-        val accounts = (0 until lanAccountsNow.length()).map { lanAccountsNow.getJSONObject(it) }
-        if (accounts.isEmpty()) return
-        if (accounts.size == 1) return confirmRemove(accounts[0].optStr("id"), accounts[0].optStr("user"), lanAdd)
-        AlertDialog.Builder(this)
-            .setTitle(R.string.lan_choose_remove)
-            .setItems(accounts.map { it.optStr("user") }.toTypedArray()) { _, which ->
-                confirmRemove(accounts[which].optStr("id"), accounts[which].optStr("user"), lanAdd)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    // One line per connected Stremio account: "✓ av…@gmail.com" (the main
-    // button removes).
+    // One box per connected Stremio account (tagged with its id):
+    // "✓ name@gmail.com", right below it that account's own "Remove from
+    // Stremio account" button, and its error if a removal failed. Boxes are
+    // updated in place, so a background change (a new mark, a new key) never
+    // swaps out a button while it is being tapped.
     private fun renderLanAccounts(accounts: JSONArray) {
-        val key = accounts.toString()
+        val list = (0 until accounts.length()).map { accounts.getJSONObject(it) }
+        val ids = list.map { it.optStr("id") }
+        removeErrors.keys.retainAll(ids.toSet())
+        val key = accounts.toString() + removing.sorted() + removeErrors.toSortedMap()
         if (key == shownAccounts) return
         shownAccounts = key
-        lanAccounts.removeAllViews()
-        lanAccountsTitle.visibility = if (accounts.length() > 0) View.VISIBLE else View.GONE
-        for (i in 0 until accounts.length()) {
-            val account = accounts.getJSONObject(i)
+        lanAccountsTitle.visibility = if (list.isNotEmpty()) View.VISIBLE else View.GONE
+        for (i in lanAccounts.childCount - 1 downTo 0) {
+            if ((lanAccounts.getChildAt(i).tag as? String) !in ids) lanAccounts.removeViewAt(i)
+        }
+        for (account in list) {
+            val id = account.optStr("id")
             val user = account.optStr("user")
             val mark = when {
-                account.optBoolean("broken") -> "⚠ "
-                account.optBoolean("ok") -> "✓ "
-                else -> "… "
+                account.optBoolean("broken") -> "⚠"
+                account.optBoolean("ok") -> "✓"
+                else -> "…"
             }
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(0, dp(6), 0, dp(6))
+            val box = lanAccounts.findViewWithTag<View>(id)
+                ?: layoutInflater.inflate(R.layout.lan_account_row, lanAccounts, false).also {
+                    it.tag = id
+                    lanAccounts.addView(it)
+                }
+            // The whole email, kept with its mark; split before the "@" only
+            // if it's too long even in small text.
+            val name = mark + NO_BREAK_SPACE + user.replace("@", BREAK_HERE + "@")
+            box.findViewById<TextView>(R.id.lan_account_user).apply {
+                if (text.toString() != name) {
+                    text = name
+                    fitOneLine(this)
+                }
             }
-            row.addView(TextView(this).apply {
-                text = mark + user
-                setTextColor(getColor(R.color.fg))
-                textSize = 16f
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            lanAccounts.addView(row)
+            val busy = id in removing
+            val label = getString(if (busy) R.string.please_wait else R.string.lan_remove_main)
+            box.findViewById<Button>(R.id.lan_account_remove).apply {
+                text = label
+                isEnabled = !busy
+                contentDescription = "$label: $user"
+                setOnClickListener { confirmRemove(id, user) }
+            }
+            val error = removeErrors[id].orEmpty()
+            box.findViewById<TextView>(R.id.lan_account_error).apply {
+                text = error
+                visibility = if (error.isEmpty()) View.GONE else View.VISIBLE
+            }
         }
     }
 
-    private fun confirmRemove(id: String, user: String, button: Button) {
+    /**
+     * Shrinks [view]'s text from 16sp (down to 12sp) until it fits on one line:
+     * now if the view has its width, else right after its first layout.
+     */
+    private fun fitOneLine(view: TextView) {
+        val fit = {
+            val room = view.width - view.totalPaddingLeft - view.totalPaddingRight
+            var sp = 16f
+            view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+            while (sp > 12f && view.paint.measureText(view.text, 0, view.text.length) > room) {
+                sp -= 0.5f
+                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+            }
+        }
+        if (view.width > 0) {
+            fit()
+            return
+        }
+        view.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+            ) {
+                if (view.width <= 0) return
+                view.removeOnLayoutChangeListener(this)
+                // Not during this layout pass: a new size asks for another one.
+                view.post { fit() }
+            }
+        })
+    }
+
+    private fun confirmRemove(id: String, user: String) {
         AlertDialog.Builder(this)
             .setMessage(getString(R.string.lan_remove_confirm, user))
-            .setPositiveButton(R.string.lan_remove) { _, _ ->
-                action("/lan/remove", JSONObject().put("id", id), button, lanError) { reply ->
-                    shownAccounts = null
-                    val problem = reply.optStr("problem")
-                    Toast.makeText(this, problem.ifEmpty { getString(R.string.lan_removed) }, Toast.LENGTH_LONG).show()
-                }
-            }
+            .setPositiveButton(R.string.lan_remove) { _, _ -> removeAccount(id) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    // Takes Telemedia out of that account (/lan/remove). Its button says
+    // "Please wait…" until the phone answers; then the box goes away, or says
+    // what went wrong.
+    private fun removeAccount(id: String) {
+        if (!removing.add(id)) return
+        removeErrors.remove(id)
+        renderLanAccounts(lanAccountsNow)
+        Thread {
+            val reply = ControlClient.post(applicationContext, "/lan/remove", JSONObject().put("id", id).toString())
+            runOnUiThread {
+                removing -= id
+                if (reply.ok) {
+                    // Off the list now; the next status no longer has it either.
+                    lanAccountsNow = JSONArray(
+                        (0 until lanAccountsNow.length()).map { lanAccountsNow.getJSONObject(it) }
+                            .filter { it.optStr("id") != id },
+                    )
+                    val problem = reply.body.optStr("problem")
+                    when {
+                        problem.isEmpty() -> Toast.makeText(this, R.string.lan_removed, Toast.LENGTH_LONG).show()
+                        // A toast shows only 2 lines (Android 12+): the whole note.
+                        !isFinishing && !isDestroyed -> AlertDialog.Builder(this)
+                            .setMessage(problem)
+                            .setPositiveButton(android.R.string.ok, null)
+                            .show()
+                        else -> Toast.makeText(applicationContext, problem, Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    removeErrors[id] = reply.error
+                }
+                renderLanAccounts(lanAccountsNow)
+            }
+        }.start()
     }
 
     private fun qrBitmap(text: String, size: Int): Bitmap {
@@ -798,3 +865,7 @@ class MainActivity : Activity() {
     /** optString without org.json's "null" for JSON null. */
     private fun JSONObject.optStr(name: String): String = if (isNull(name)) "" else optString(name)
 }
+
+// Keeps the mark and the email on one line / a place the email may wrap.
+private val NO_BREAK_SPACE = Char(0x00A0).toString()
+private val BREAK_HERE = Char(0x200B).toString()

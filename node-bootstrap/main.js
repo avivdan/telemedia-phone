@@ -657,25 +657,28 @@ function migrateLinks() {
 
 const newLinkId = () => require('crypto').randomBytes(4).toString('hex');
 
-// "aviv@gmail.com" → "av…@gmail.com": enough to tell accounts apart.
-function maskEmail(email) {
-  const [name, domain] = String(email || '').split('@');
-  if (!domain) return null;
-  return `${name.slice(0, 2)}…@${domain}`;
+// The account's email, shown in full in the app's list (only the app can read
+// the status), so the user knows exactly which account it is.
+function accountName(email) {
+  const e = String(email || '').trim();
+  return e.includes('@') ? e : null;
 }
+// Versions up to 0.2.4 saved it shortened, like "av…@gmail.com".
+const SHORTENED_NAME = /…@/;
 
-// Names for accounts that have none yet (from older versions). In line with
-// the other account writes, so it can't undo a Connect or a Remove.
+// Names for accounts that have none yet, or only the shortened one an older
+// version saved. In line with the other account writes, so it can't undo a
+// Connect or a Remove.
 function fillUserNames() {
   return serialized(async () => {
     const links = readLinks();
     let changed = false;
     for (const l of links) {
-      if (l.user || l.broken) continue;
+      if ((l.user && !SHORTENED_NAME.test(l.user)) || l.broken) continue;
       try {
         const u = await stremioAccount.getUser(l.authKey);
         l.userId = u.id;
-        l.user = maskEmail(u.email);
+        l.user = accountName(u.email) || l.user;
         changed = true;
       } catch (err) {
         if (stremioAccount.isAuthError(err)) {
@@ -900,7 +903,7 @@ async function lanPairingLink() {
       const same = links.find((l) => l.userId === user.id);
       const link = same || { id: newLinkId() };
       const oldKey = same && same.authKey;
-      Object.assign(link, { authKey, userId: user.id, user: maskEmail(user.email), url: null, broken: false });
+      Object.assign(link, { authKey, userId: user.id, user: accountName(user.email), url: null, broken: false });
       const result = await updateLink(link, lanStatus.url, myLanManifest(await addonManifest()));
       if (result !== 'ok' && link.broken) {
         // Stremio refused this session: nothing was written.

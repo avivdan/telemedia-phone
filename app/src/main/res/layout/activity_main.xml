@@ -388,18 +388,12 @@
                 android:textIsSelectable="true"
                 android:textSize="13sp" />
 
+            <!-- "Connect a TV", then "Connect another TV". -->
             <Button
                 android:id="@+id/lan_add"
                 style="@style/Telemedia.Button.Primary"
                 android:layout_marginTop="16dp"
                 android:text="@string/lan_add" />
-
-            <!-- Shown once connected: the main button then removes. -->
-            <Button
-                android:id="@+id/lan_add_another"
-                style="@style/Telemedia.Button.Secondary"
-                android:text="@string/lan_add_another"
-                android:visibility="gone" />
 
             <Button
                 android:id="@+id/lan_copy"
@@ -423,6 +417,7 @@
                 android:textSize="16sp"
                 android:visibility="gone" />
 
+            <!-- One box per account (lan_account_row), with its Remove button. -->
             <LinearLayout
                 android:id="@+id/lan_accounts"
                 android:layout_width="match_parent"

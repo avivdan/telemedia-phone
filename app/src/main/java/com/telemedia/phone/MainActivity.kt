@@ -105,6 +105,7 @@ class MainActivity : Activity() {
     private lateinit var lanAccountsTitle: TextView
     private lateinit var lanAccounts: LinearLayout
     private lateinit var batteryCard: View
+    private lateinit var stoppedCard: View
     private lateinit var footer: View
     private lateinit var logout: Button
 
@@ -137,7 +138,7 @@ class MainActivity : Activity() {
         bindViews()
         setUpActions()
         askNotificationsOnce()
-        NodeService.start(this)
+        if (!AppConfig.isStopped(this)) NodeService.start(this)
     }
 
     override fun onResume() {
@@ -201,6 +202,7 @@ class MainActivity : Activity() {
         lanAccountsTitle = findViewById(R.id.lan_accounts_title)
         lanAccounts = findViewById(R.id.lan_accounts)
         batteryCard = findViewById(R.id.battery_card)
+        stoppedCard = findViewById(R.id.stopped_card)
         footer = findViewById(R.id.footer)
         logout = findViewById(R.id.logout)
     }
@@ -287,6 +289,23 @@ class MainActivity : Activity() {
 
         findViewById<Button>(R.id.battery_allow).setOnClickListener { requestBatteryExemption() }
         findViewById<Button>(R.id.restart).setOnClickListener { restartNode() }
+        findViewById<Button>(R.id.stop).setOnClickListener {
+            AlertDialog.Builder(this)
+                .setMessage(R.string.stop_confirm)
+                .setPositiveButton(R.string.stop) { _, _ ->
+                    restartingUntil = 0
+                    AppConfig.setStopped(this, true)
+                    render(null)
+                    Thread { NodeService.stop(applicationContext) }.start()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+        findViewById<Button>(R.id.start).setOnClickListener {
+            AppConfig.setStopped(this, false)
+            NodeService.start(this)
+            render(null)
+        }
         logout.setOnClickListener {
             AlertDialog.Builder(this)
                 .setMessage("Log this phone out of Telegram?")
@@ -303,10 +322,18 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------------
     private fun render(polled: JSONObject?) {
         val s = if (System.currentTimeMillis() < restartingUntil) null else polled
-        val state = s?.optString("state") ?: "offline"
-        val cards = listOf(loginCard, passwordCard, configCard, groupsCard, stremioCard, doneCard, lanCard, batteryCard)
+        val state = when {
+            AppConfig.isStopped(this) -> "stopped"
+            s == null -> "offline"
+            else -> s.optString("state")
+        }
+        val cards = listOf(loginCard, passwordCard, configCard, groupsCard, stremioCard, doneCard, lanCard, batteryCard, stoppedCard)
         var visible = setOf<View>()
         val text: String? = when (state) {
+            "stopped" -> {
+                visible = setOf(stoppedCard)
+                null
+            }
             "offline", "starting" -> getString(R.string.starting)
             "logging_in" -> getString(R.string.logging_in)
             "starting_addon" -> getString(R.string.starting_addon)

@@ -33,6 +33,12 @@ class NodeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // "Stop" in the notification.
+        if (intent?.action == ACTION_STOP) {
+            AppConfig.setStopped(this, true)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startInForeground()
         if (!started) {
             started = true
@@ -58,6 +64,18 @@ class NodeService : Service() {
             Log.e(TAG, "node failed to start", t)
         }
         // Node can't be restarted in-process; let the system/UI restart us.
+        Process.killProcess(Process.myPid())
+    }
+
+    // Stopped (Stop Telemedia): Node can't stop in-process, so end the ":node"
+    // process. The service was stopped, not killed, so nothing restarts it.
+    override fun onDestroy() {
+        try {
+            setAwake(false)
+        } catch (e: Exception) {
+            Log.w(TAG, "release locks", e)
+        }
+        super.onDestroy()
         Process.killProcess(Process.myPid())
     }
 
@@ -107,11 +125,15 @@ class NodeService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
+        val stop = PendingIntent.getService(
+            this, 1, Intent(this, NodeService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification = builder
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(getString(R.string.notification_text))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, getString(R.string.notification_stop), stop).build())
             .setOngoing(true)
             .build()
 
@@ -127,6 +149,7 @@ class NodeService : Service() {
         private const val CHANNEL = "addon"
         private const val NOTIFICATION_ID = 1
         const val CONTROL_PORT = 7001
+        private const val ACTION_STOP = "com.telemedia.phone.STOP"
 
         // Per-process flag; only meaningful inside the ":node" process.
         @Volatile
@@ -141,8 +164,15 @@ class NodeService : Service() {
             }
         }
 
+        /** "Stop Telemedia": stops the addon until the user starts it again. */
+        fun stop(ctx: Context) {
+            AppConfig.setStopped(ctx, true)
+            ctx.stopService(Intent(ctx, NodeService::class.java))
+        }
+
         /** Kill the ":node" process (if any) and start a fresh one. Call off the main thread. */
         fun restart(ctx: Context) {
+            AppConfig.setStopped(ctx, false)
             ControlClient.post("/exit", "{}")
             Thread.sleep(800)
             val am = ctx.getSystemService(ActivityManager::class.java)

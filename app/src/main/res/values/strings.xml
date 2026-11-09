@@ -85,9 +85,15 @@
     <string name="battery_allow">Allow</string>
 
     <string name="restart">Restart</string>
+    <string name="stop">Stop Telemedia</string>
+    <string name="stop_confirm">Stop Telemedia? Stremio on this phone and on your TVs can\'t play from it until you start it again. It stays stopped after a restart of the phone too.</string>
+    <string name="stopped_title">Telemedia is stopped</string>
+    <string name="stopped_text">Nothing runs in the background. Stremio on this phone and on your TVs can\'t play from it until you start it again.</string>
+    <string name="start">Start Telemedia</string>
     <string name="logout">Log out of Telegram</string>
 
     <string name="notification_channel">Telemedia addon</string>
     <string name="notification_title">Telemedia is running</string>
     <string name="notification_text">Streams your Telegram videos to Stremio</string>
+    <string name="notification_stop">Stop</string>
 </resources>

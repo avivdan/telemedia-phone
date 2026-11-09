@@ -409,6 +409,26 @@
                 android:text="@string/battery_allow" />
         </LinearLayout>
 
+        <!-- Stopped by the user ("Stop Telemedia") -->
+        <LinearLayout
+            android:id="@+id/stopped_card"
+            style="@style/Telemedia.Card">
+
+            <TextView
+                style="@style/Telemedia.CardTitle"
+                android:text="@string/stopped_title" />
+
+            <TextView
+                style="@style/Telemedia.Text"
+                android:text="@string/stopped_text" />
+
+            <Button
+                android:id="@+id/start"
+                style="@style/Telemedia.Button.Primary"
+                android:layout_marginTop="16dp"
+                android:text="@string/start" />
+        </LinearLayout>
+
         <!-- Footer -->
         <LinearLayout
             android:id="@+id/footer"
@@ -427,6 +447,11 @@
                 android:id="@+id/logout"
                 style="@style/Telemedia.Button.Secondary"
                 android:text="@string/logout" />
+
+            <Button
+                android:id="@+id/stop"
+                style="@style/Telemedia.Button.Secondary"
+                android:text="@string/stop" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

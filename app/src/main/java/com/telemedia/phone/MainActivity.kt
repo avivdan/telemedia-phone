@@ -374,8 +374,8 @@ class MainActivity : Activity() {
                 visible = renderRunning(s!!)
                 runningText(s)
             }
-            "error" -> "Something went wrong: ${s!!.optString("error")}\n\nTap Restart below. " +
-                "If it keeps happening, log out and log in again."
+            "error" -> "Something went wrong.\n${s!!.optString("error")}\n\nTap Restart below.\n" +
+                "Still not working? Log out and log in again."
             else -> state
         }
         for (card in cards) card.visibility = if (card in visible) View.VISIBLE else View.GONE
@@ -401,7 +401,7 @@ class MainActivity : Activity() {
 
     private fun renderPassword(s: JSONObject) {
         val hint = s.optStr("hint")
-        passwordText.text = getString(R.string.password_intro) + if (hint.isNotBlank()) "\n(Hint: $hint)" else ""
+        passwordText.text = getString(R.string.password_intro) + if (hint.isNotBlank()) "\nHint: $hint" else ""
         setError(passwordError, if (s.optBoolean("wrong")) getString(R.string.password_wrong) else "")
     }
 
@@ -487,10 +487,10 @@ class MainActivity : Activity() {
                 joined -> "✓ Already a member"
                 result?.optStr("result") == "joined" -> "✓ Joined"
                 result?.optStr("result") == "already" -> "✓ Already a member"
-                result?.optStr("result") == "requested" -> "Join request sent: an admin has to approve it"
+                result?.optStr("result") == "requested" -> "Request sent. An admin must approve it."
                 result != null && result.optStr("error").isNotEmpty() -> "✗ " + result.optStr("error")
                 error.isNotEmpty() -> "✗ " + error.replaceFirstChar { it.uppercase() }
-                item.optBoolean("approval") -> "An admin approves new members"
+                item.optBoolean("approval") -> "An admin must approve new members."
                 else -> ""
             }
             groupsList.addView(CheckBox(this).apply {
@@ -568,7 +568,7 @@ class MainActivity : Activity() {
         }
         lanNote.text = note
         lanNote.visibility = if (note.isEmpty()) View.GONE else View.VISIBLE
-        setError(lanError, if (state == "error") "Couldn't connect: " + pairing.optStr("error") else "")
+        setError(lanError, if (state == "error") "Couldn't connect.\n" + pairing.optStr("error") else "")
         renderLanAccounts(accounts)
     }
 
@@ -651,7 +651,7 @@ class MainActivity : Activity() {
         val note = when (stremio.optStr("state")) {
             "installing" -> getString(R.string.stremio_installing)
             "waiting" -> if (stremioOpened) getString(R.string.stremio_waiting) else ""
-            "error" -> "Couldn't add it yet: " + stremio.optStr("error")
+            "error" -> "Couldn't add it yet.\n" + stremio.optStr("error")
             else -> if (added) getString(R.string.stremio_added) else ""
         }
         stremioNote.text = note

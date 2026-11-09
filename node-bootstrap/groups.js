@@ -115,7 +115,7 @@ async function join(client, entry) {
     const text = errorText(err);
     if (/USER_ALREADY_PARTICIPANT/.test(text)) return 'already';
     if (/INVITE_REQUEST_SENT/.test(text)) return 'requested';
-    if (/CHANNELS_TOO_MUCH/.test(text)) throw new Error('You are in too many groups and channels (Telegram\'s limit).');
+    if (/CHANNELS_TOO_MUCH/.test(text)) throw new Error('You are in too many groups and channels.\nTelegram doesn\'t allow more.');
     if (/INVITE_HASH_EXPIRED|INVITE_HASH_INVALID/.test(text)) throw new Error('The invite link no longer works.');
     throw new Error(text);
   }

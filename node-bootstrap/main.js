@@ -134,7 +134,7 @@ const actions = {
   '/login/phone': async ({ phone }) => {
     if (!login) throw new Error('Not logging in right now.');
     const number = myTelegram.normalizePhone(phone);
-    if (!number) throw new Error('Type the full number with the country code, e.g. +972 50 123 4567.');
+    if (!number) throw new Error('Type the full number with the country code.\nLike +972 50 123 4567.');
     await login.submitPhone(number);
   },
   '/login/code': async ({ code }) => {
@@ -359,7 +359,7 @@ function configForm(failure) {
     configSetup = {
       phone: async ({ phone }) => {
         const number = myTelegram.normalizePhone(phone);
-        if (!number) throw new Error('Type the full number with the country code, e.g. +972 50 123 4567.');
+        if (!number) throw new Error('Type the full number with the country code.\nLike +972 50 123 4567.');
         pending = await myTelegram.sendCode(number);
         step('code_sent');
       },
@@ -378,7 +378,7 @@ function configForm(failure) {
         const id = String(apiId || '').trim();
         const hash = String(apiHash || '').trim().toLowerCase();
         if (!/^\d{3,12}$/.test(id)) throw new Error('The api_id is a number.');
-        if (!/^[0-9a-f]{32}$/.test(hash)) throw new Error('The api_hash is 32 letters and digits.');
+        if (!/^[0-9a-f]{32}$/.test(hash)) throw new Error('The api_hash is 32 letters and numbers.');
         finish({ apiId: id, apiHash: hash });
       },
     };
@@ -601,7 +601,7 @@ function readLinks() {
 function linkFor(id) {
   const links = readLinks();
   const link = id ? links.find((l) => l.id === id) : links[0];
-  if (!link) throw new Error('No connected Stremio account: tap "Connect a TV" first.');
+  if (!link) throw new Error('No connected Stremio account.\nTap Connect a TV first.');
   return link;
 }
 
@@ -874,13 +874,13 @@ async function lanPairingLink() {
       }
       if (!user || !user.id) {
         stremioAccount.logout(authKey).catch(() => {});
-        return fail('Could not tell which Stremio account that is. Try again.');
+        return fail('Couldn\'t tell which Stremio account that is.\nTry again.');
       }
       // The confirmation can come minutes later: still on Wi-Fi?
       await updateAddress();
       if (!lanStatus.url) {
         stremioAccount.logout(authKey).catch(() => {});
-        return fail('Connect the phone to Wi-Fi first, then try again.');
+        return fail('Connect the phone to Wi-Fi first.\nThen try again.');
       }
       let links = readLinks();
       const same = links.find((l) => l.userId === user.id);
@@ -891,7 +891,7 @@ async function lanPairingLink() {
       if (result !== 'ok' && link.broken) {
         // Stremio refused this session: nothing was written.
         stremioAccount.logout(authKey).catch(() => {});
-        return fail('Stremio did not accept the change. Try again.');
+        return fail('Stremio didn\'t accept it.\nTry again.');
       }
       // Kept even if the write's check failed (it may have gone through): the
       // next update rewrites the entry, or forgets the account if it's not there.
@@ -902,7 +902,7 @@ async function lanPairingLink() {
       if (stale.length === 1) links = links.filter((l) => l !== stale[0]);
       saveLinks(links);
       if (oldKey && oldKey !== authKey) stremioAccount.logout(oldKey).catch(() => {});
-      if (result !== 'ok') return fail('Stremio is slow to answer: Telemedia will finish adding it by itself.');
+      if (result !== 'ok') return fail('Stremio is slow right now.\nTelemedia will finish adding it by itself.');
       lanStatus = { ...lanStatus, pairing: { state: 'done', user: link.user, at: Date.now() } };
     });
   })().catch((err) => {
@@ -929,8 +929,8 @@ function removeLink(id) {
         || (a.transportUrl && (a.transportUrl === link.url || a.transportUrl.includes(`/${key}/`))));
     } catch (err) {
       problem = stremioAccount.isAuthError(err)
-        ? 'The Stremio session there has ended, so the entry could not be deleted; it no longer works anyway (new key). To tidy up, remove it in Stremio\'s Add-ons on that TV.'
-        : 'Could not reach Stremio to delete the entry; it no longer works anyway (new key).';
+        ? 'Removed from the list.\nStremio had already signed this phone out of that account, so its entry stays there.\nIt doesn\'t work anymore (new key).\nYou can delete it in Stremio on that TV, under Add-ons.'
+        : 'Removed from the list.\nStremio couldn\'t be reached to delete its entry.\nIt doesn\'t work anymore (new key).';
       console.log('[lan] remove: ' + messageOf(err));
     }
     stremioAccount.logout(link.authKey).catch(() => {});
@@ -1010,7 +1010,7 @@ async function stremioPairingLink() {
     if (stremioConnected) throw new Error('Telemedia is already in your Stremio.');
     await sleep(300);
   }
-  throw new Error('Stremio is unreachable right now. Check the internet connection and try again.');
+  throw new Error('Can\'t reach Stremio right now.\nCheck the internet and try again.');
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,7 +1043,7 @@ async function offerGroups(force) {
 async function joinGroups(links) {
   if (groupsStatus.state !== 'offer') throw new Error('Nothing to join right now.');
   const chosen = groupList().filter((e) => links.includes(e.link));
-  if (!chosen.length) throw new Error('Tick at least one group, or tap Skip.');
+  if (!chosen.length) throw new Error('Tick at least one group.\nOr tap Skip.');
   const items = groupsStatus.items;
   groupsStatus = { state: 'joining', items, results: {} };
   (async () => {
@@ -1078,8 +1078,10 @@ async function untilOnline(fn) {
   }
 }
 
-const keyProblem = (err) =>
-  'Telegram rejected the api_id / api_hash (' + messageOf(err) + '). Get your own on my.telegram.org below.';
+const keyProblem = (err) => {
+  console.log('[bootstrap] key rejected: ' + messageOf(err));
+  return 'Telegram rejected this key.\nGet your own key below.';
+};
 
 async function main() {
   startControlServer();
@@ -1107,7 +1109,7 @@ async function main() {
       } catch (err) {
         console.log('[bootstrap] automatic setup failed: ' + messageOf(err));
         setupFailure = err instanceof KeyRejectedError
-          ? 'The built-in setup key no longer works. Get your own key below.'
+          ? 'The built-in key stopped working.\nGet your own key below.'
           : messageOf(err);
       }
     }

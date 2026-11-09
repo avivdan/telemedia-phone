@@ -29,14 +29,14 @@ function friendlyError(err) {
   const seconds = Number(err && err.seconds) || Number((text.match(/FLOOD_WAIT_(\d+)/) || [])[1]) || 0;
   if (seconds || /^FLOOD/.test(text)) {
     const minutes = Math.max(1, Math.ceil(seconds / 60));
-    return `Telegram says: too many tries. Wait ${seconds ? `${minutes} minute${minutes > 1 ? 's' : ''}` : 'a while'} and try again.`;
+    return `Too many tries.\nWait ${seconds ? `${minutes} minute${minutes > 1 ? 's' : ''}` : 'a while'} and try again.`;
   }
-  if (/PHONE_NUMBER_INVALID/.test(text)) return 'That number is not valid. Use the full number with the country code, e.g. +972 50 123 4567.';
-  if (/PHONE_NUMBER_BANNED/.test(text)) return 'Telegram has banned this phone number.';
-  if (/PHONE_CODE_INVALID|PHONE_CODE_EMPTY/.test(text)) return 'Wrong code. Check the code in the Telegram app and type it again.';
-  if (/PHONE_CODE_EXPIRED/.test(text)) return 'The code expired. Tap "Send code" to get a new one.';
-  if (KEY_REJECTED.test(text)) return 'Telegram rejected this app\'s API key.';
-  if (/NO_CONNECTION/.test(text)) return 'No connection to Telegram. Check the internet and try again.';
+  if (/PHONE_NUMBER_INVALID/.test(text)) return 'That number is not valid.\nUse the full number with the country code, like +972 50 123 4567.';
+  if (/PHONE_NUMBER_BANNED/.test(text)) return 'Telegram has blocked this phone number.';
+  if (/PHONE_CODE_INVALID|PHONE_CODE_EMPTY/.test(text)) return 'Wrong code.\nCheck it in the Telegram app and type it again.';
+  if (/PHONE_CODE_EXPIRED/.test(text)) return 'The code expired.\nTap Send code to get a new one.';
+  if (KEY_REJECTED.test(text)) return 'Telegram rejected this key.';
+  if (/NO_CONNECTION/.test(text)) return 'No connection to Telegram.\nCheck the internet and try again.';
   return text;
 }
 
@@ -169,7 +169,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
         new Api.auth.SignIn({ phoneNumber: a.phone, phoneCodeHash: a.codeHash, phoneCode }),
       );
       if (r instanceof Api.auth.AuthorizationSignUpRequired) {
-        throw new Error('No Telegram account uses this number. Sign up in the Telegram app first.');
+        throw new Error('No Telegram account uses this number.\nSign up in the Telegram app first.');
       }
       succeed(a);
     } catch (err) {

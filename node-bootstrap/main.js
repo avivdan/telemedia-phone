@@ -151,6 +151,16 @@ const actions = {
     offerGroups(true);
   },
   '/groups/join': async ({ links }) => joinGroups(Array.isArray(links) ? links : []),
+  // The account's own groups/channels, to choose head-start groups from
+  // (developer tool: npm run my-groups, over adb).
+  '/chats': async () => {
+    if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
+    return { chats: await groups.listMyChats(await addonTelegram().getClient()) };
+  },
+  '/chats/invites': async () => {
+    if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
+    return { chats: await groups.findInvites(await addonTelegram().getClient()) };
+  },
   '/groups/skip': async () => {
     patchConfig({ groupsDone: true });
     groupsStatus = { state: 'skipped' };

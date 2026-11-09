@@ -138,4 +138,107 @@ async function joinAll(client, entries, onProgress = () => {}) {
   return results;
 }
 
-module.exports = { parseGroupLink, parseGroupList, describe, join, joinAll };
+// The groups and channels this account is in, to pick head-start groups from
+// (npm run my-groups). Only public ones (with a t.me link) can be suggested
+// to others; for those, also how many videos / files they have.
+async function listMyChats(client) {
+  const { Api } = require('telegram');
+  const bigInt = require('big-integer');
+  const count = async (peer, filter) => {
+    try {
+      const r = await client.invoke(new Api.messages.Search({
+        peer, q: '', filter, minDate: 0, maxDate: 0, offsetId: 0, addOffset: 0,
+        limit: 1, maxId: 0, minId: 0, hash: bigInt(0),
+      }));
+      return typeof r.count === 'number' ? r.count : (r.messages || []).length;
+    } catch {
+      return null;
+    }
+  };
+  const out = [];
+  for (const d of await client.getDialogs({ limit: 300 })) {
+    if (!d.isGroup && !d.isChannel) continue;
+    const e = d.entity || {};
+    const username = e.username || (e.usernames || []).map((u) => u.username).find(Boolean) || null;
+    const chat = { title: d.title || '', link: username ? 't.me/' + username : null, channel: !!e.broadcast };
+    if (e.participantsCount) chat.members = e.participantsCount;
+    if (username) {
+      chat.videos = await count(e, new Api.InputMessagesFilterVideo());
+      chat.files = await count(e, new Api.InputMessagesFilterDocument());
+      await sleep(300);
+    }
+    out.push(chat);
+  }
+  return out;
+}
+
+// Invite links for the account's private groups/channels, read-only:
+//   1. the chat's own invite link, when this account may see it (admins);
+//   2. invite links posted in the account's chats (e.g. channel directories),
+//      matched to a private chat with checkChatInvite (which doesn't join).
+// Nothing is created: no new invite links in other people's groups.
+async function findInvites(client) {
+  const { Api } = require('telegram');
+  const wanted = [];
+  for (const d of await client.getDialogs({ limit: 300 })) {
+    const e = d.entity || {};
+    if ((!d.isGroup && !d.isChannel) || e.username || (e.usernames || []).length) continue;
+    wanted.push({ id: String(e.id), title: d.title || '', channel: !!e.broadcast, entity: e });
+  }
+  const found = new Map();
+
+  for (const w of wanted) {
+    try {
+      const full = w.entity.className === 'Chat'
+        ? await client.invoke(new Api.messages.GetFullChat({ chatId: w.entity.id }))
+        : await client.invoke(new Api.channels.GetFullChannel({ channel: w.entity }));
+      const link = full.fullChat && full.fullChat.exportedInvite && full.fullChat.exportedInvite.link;
+      if (link) found.set(w.id, { link, how: 'chat info' });
+    } catch {
+      // not allowed: try the next way
+    }
+    await sleep(300);
+  }
+
+  const hashes = new Set();
+  for (const q of ['', 't.me', 'joinchat']) {
+    try {
+      const res = await client.invoke(new Api.messages.SearchGlobal({
+        q, filter: new Api.InputMessagesFilterUrl(), minDate: 0, maxDate: 0, offsetRate: 0,
+        offsetPeer: new Api.InputPeerEmpty(), offsetId: 0, limit: 100,
+      }));
+      for (const m of res.messages || []) {
+        const texts = [m.message || ''];
+        for (const ent of m.entities || []) if (ent.url) texts.push(ent.url);
+        for (const row of (m.replyMarkup && m.replyMarkup.rows) || []) {
+          for (const b of row.buttons || []) if (b.url) texts.push(b.url);
+        }
+        for (const t of texts) {
+          for (const mm of t.matchAll(/t\.me\/(?:\+|joinchat\/)([A-Za-z0-9_-]{8,})/g)) hashes.add(mm[1]);
+        }
+      }
+    } catch (err) {
+      console.log('[groups] search: ' + errorText(err));
+    }
+  }
+  console.log(`[groups] ${hashes.size} invite links seen in chats`);
+
+  let checks = 0;
+  for (const hash of hashes) {
+    if (checks++ >= 40 || wanted.every((w) => found.has(w.id))) break;
+    try {
+      const r = await client.invoke(new Api.messages.CheckChatInvite({ hash }));
+      const chat = r.chat;
+      const match = chat
+        ? wanted.find((w) => w.id === String(chat.id))
+        : wanted.find((w) => w.title && w.title === r.title);
+      if (match && !found.has(match.id)) found.set(match.id, { link: 'https://t.me/+' + hash, how: 'posted in a chat' });
+    } catch (err) {
+      if (/FLOOD/.test(errorText(err))) break;
+    }
+    await sleep(1500);
+  }
+  return wanted.map((w) => ({ title: w.title, channel: w.channel, ...(found.get(w.id) || { link: null }) }));
+}
+
+module.exports = { parseGroupLink, parseGroupList, describe, join, joinAll, listMyChats, findInvites };

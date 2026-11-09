@@ -57,10 +57,6 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var loginCard: View
-    private lateinit var loginLink: Button
-    private lateinit var loginLinkHint: TextView
-    private lateinit var loginUsePhone: Button
-    private lateinit var phoneGroup: View
     private lateinit var phone: EditText
     private lateinit var sendPhone: Button
     private lateinit var codeGroup: View
@@ -108,8 +104,6 @@ class MainActivity : Activity() {
     private lateinit var footer: View
     private lateinit var logout: Button
 
-    private var phoneMode = false
-    private var linkOpened = false
     private var stremioOpened = false
     private var lanOpened = false
     private var shownLanUrl: String? = null
@@ -153,10 +147,6 @@ class MainActivity : Activity() {
     private fun bindViews() {
         status = findViewById(R.id.status)
         loginCard = findViewById(R.id.login_card)
-        loginLink = findViewById(R.id.login_link)
-        loginLinkHint = findViewById(R.id.login_link_hint)
-        loginUsePhone = findViewById(R.id.login_use_phone)
-        phoneGroup = findViewById(R.id.phone_group)
         phone = findViewById(R.id.phone)
         sendPhone = findViewById(R.id.send_phone)
         codeGroup = findViewById(R.id.code_group)
@@ -206,23 +196,7 @@ class MainActivity : Activity() {
     }
 
     private fun setUpActions() {
-        // Telegram login: the link opens the Telegram app on this phone.
-        loginLink.setOnClickListener {
-            action("/login/link", JSONObject(), loginLink, loginError) { reply ->
-                if (reply.isNull("link")) return@action // already logged in
-                if (openLink(reply.getString("link"))) {
-                    linkOpened = true
-                } else {
-                    showError(loginError, getString(R.string.no_telegram))
-                    phoneMode = true
-                }
-            }
-        }
-        loginUsePhone.setOnClickListener {
-            phoneMode = true
-            phoneGroup.visibility = View.VISIBLE
-            focus(phone)
-        }
+        // Telegram login: phone number, then the code Telegram sends to the Telegram app.
         sendPhone.setOnClickListener {
             val number = toInternational(phone.text.toString())
             action("/login/phone", JSONObject().put("phone", number), sendPhone, loginError) {
@@ -359,13 +333,8 @@ class MainActivity : Activity() {
     }
 
     private fun renderLogin(view: JSONObject) {
-        val method = view.optStr("method")
-        val codeStep = method == "phone" && view.optStr("step") == "code"
-        if (method == "phone") phoneMode = true
-        phoneGroup.visibility = if (phoneMode) View.VISIBLE else View.GONE
-        codeGroup.visibility = if (codeStep) View.VISIBLE else View.GONE
+        codeGroup.visibility = if (view.optStr("step") == "code") View.VISIBLE else View.GONE
         codeText.setText(if (view.optStr("codeVia") == "sms") R.string.code_sent_sms else R.string.code_sent_app)
-        loginLinkHint.setText(if (linkOpened) R.string.login_link_opened else R.string.login_link_hint)
         setError(loginError, view.optStr("error"))
     }
 

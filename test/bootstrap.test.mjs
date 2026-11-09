@@ -45,10 +45,6 @@ test('group list: lines, notes, comments, duplicates', () => {
   assert.throws(() => groups.parseGroupList('not a link'), /can't read/);
 });
 
-test('login: tg:// link from a token', () => {
-  assert.equal(login.toLink(Buffer.from([0xfb, 0xff, 0x01])), 'tg://login?token=-_8B');
-});
-
 test('login: friendly errors', () => {
   assert.match(login.friendlyError({ errorMessage: 'PHONE_CODE_INVALID' }), /Wrong code/);
   assert.match(login.friendlyError({ errorMessage: 'FLOOD', seconds: 300 }), /Wait 5 minutes/);

@@ -150,9 +150,11 @@ Pair device with pairing code*, then `adb pair <ip>:<pair-port>` and
 If the phone shows "offline": `adb kill-server`, then `adb connect` again.
 
 **Telegram login on one phone.** The TV app shows a QR code that another
-phone scans. A phone can't scan its own screen, so the phone app logs in with
-the phone number: `auth.sendCode` sends a code to the Telegram app, the user
-types it (`login.js`). The first-run setup is the TV app's automatic one
+phone scans. A phone can't scan its own screen, and Telegram refuses
+`tg://login?token=…` links opened on the phone itself (it answers "go to
+Settings > Devices > Scan QR"; tested on a Galaxy S24 FE). So the phone app
+logs in with the phone number: `auth.sendCode` sends a code to the Telegram
+app, the user types it (`login.js`). The first-run setup is the TV app's automatic one
 (`setup.js`): the bundled starter key logs in, the my.telegram.org login code
 is read from the *Telegram* chat (777000), the user's own api_id/api_hash is
 read or created (`my-telegram.js`), then the own key logs in by approving its

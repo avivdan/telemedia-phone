@@ -10,18 +10,13 @@
 
     <!-- Step 1: Telegram -->
     <string name="login_title">1 · Log in to Telegram</string>
-    <string name="login_intro">Telemedia uses your Telegram account. The login stays on this phone.</string>
-    <string name="login_link">Log in with Telegram</string>
-    <string name="login_link_hint">Telegram opens and asks you to confirm. Then come back here.</string>
-    <string name="login_link_opened">Confirm in Telegram, then come back here.</string>
-    <string name="login_use_phone">Use my phone number</string>
+    <string name="login_intro">Telemedia uses your Telegram account; the login stays on this phone. Type your Telegram phone number: Telegram sends a code to your Telegram app.</string>
     <string name="phone_hint">Phone number, e.g. +972 50 123 4567</string>
     <string name="send_code">Send code</string>
     <string name="code_sent_app">Telegram sent a code to your Telegram app (chat “Telegram”). Type it here:</string>
     <string name="code_sent_sms">Telegram sent you a code by SMS. Type it here:</string>
     <string name="code_hint">Login code</string>
     <string name="log_in">Log in</string>
-    <string name="no_telegram">Telegram isn\'t installed on this phone. Use your phone number instead.</string>
 
     <string name="password_title">Two-step verification</string>
     <string name="password_intro">Your Telegram account has a password. Type it to continue.</string>

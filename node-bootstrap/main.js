@@ -7,9 +7,8 @@
 //   1. Control server on 127.0.0.1:7001 for the app screen (GET /status and
 //      the POST actions below).
 //   2. No own api_id/api_hash yet, starter key bundled → state "need_login":
-//      the user logs in with the starter key (login.js: "Log in with
-//      Telegram" opens tg://login in the Telegram app, or phone number +
-//      code), then setup.js fetches the user's own key from my.telegram.org
+//      the user logs in with the starter key (login.js: phone number + the
+//      code Telegram sends to the Telegram app), then setup.js fetches the user's own key from my.telegram.org
 //      and switches to it. Without a starter key, or if that fails →
 //      "need_config": the same my.telegram.org steps by hand in the app, or
 //      paste an api_id/api_hash.
@@ -119,10 +118,6 @@ const actions = {
   },
 
   // Telegram login (state need_login), see login.js.
-  '/login/link': async () => {
-    if (!login) throw new Error('Not logging in right now.');
-    return { link: await login.requestLink() };
-  },
   '/login/phone': async ({ phone }) => {
     if (!login) throw new Error('Not logging in right now.');
     const number = myTelegram.normalizePhone(phone);

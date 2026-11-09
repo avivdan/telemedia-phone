@@ -1,11 +1,13 @@
 // Telegram login on the phone itself, for one api key (the starter key during
-// first-run setup, or the user's own key later). The phone can't scan a QR
-// code on its own screen, so the user picks one of:
-//   - link:  auth.exportLoginToken → "tg://login?token=…", opened in the
-//            Telegram app on this phone, which asks to confirm the login.
-//   - phone: auth.sendCode → Telegram sends a code to the Telegram app (or by
-//            SMS) → the user types it here → auth.signIn.
-// A two-step verification password is asked through askPassword(hint, wrong).
+// first-run setup, or the user's own key later), with the phone number:
+// auth.sendCode → Telegram sends a code to the Telegram app (or by SMS) →
+// the user types it here → auth.signIn. A two-step verification password is
+// asked through askPassword(hint, wrong).
+//
+// Why not the TV's QR login: a phone can't scan its own screen, and Telegram
+// refuses tg://login?token=… links opened on the phone ("To confirm Telegram
+// login, please go to Settings > Devices > Scan QR"; tested on Telegram for
+// Android, Nov 2026).
 //
 // createLogin(...).done resolves with the logged-in TelegramClient.
 
@@ -31,9 +33,7 @@ function friendlyError(err) {
   return text;
 }
 
-const toLink = (token) => 'tg://login?token=' + Buffer.from(token).toString('base64url');
-
-// onStatus(view): view = { method: null|'link'|'phone', step?: 'code', codeVia?, error? }
+// onStatus(view): view = { step: 'phone'|'code', codeVia?: 'app'|'sms', error? }
 // askPassword(hint, wrong) → Promise<string>
 function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   const { TelegramClient, Api } = require('telegram');
@@ -41,40 +41,21 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   apiId = Number(apiId);
   const creds = { apiId, apiHash };
 
-  let attempt = null; // { kind, client, ... } — at most one at a time
+  let attempt = null; // { client, phone, codeHash, cancelled }: the latest "Send code"
   let finished = false;
   let resolveDone;
   const done = new Promise((r) => { resolveDone = r; });
-  let view = { method: null };
+  let view = { step: 'phone' };
   const show = (patch) => {
     view = { ...view, ...patch };
     onStatus(view);
   };
-
-  async function connect() {
-    const client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
-    await client.connect();
-    return client;
-  }
 
   async function drop(a) {
     if (!a) return;
     a.cancelled = true;
     if (attempt === a) attempt = null;
     if (a.client) await a.client.destroy().catch(() => {});
-  }
-
-  async function begin(kind) {
-    if (finished) throw new Error('Already logged in.');
-    await drop(attempt);
-    const a = { kind, cancelled: false };
-    attempt = a;
-    a.client = await connect();
-    if (a.cancelled) {
-      await a.client.destroy().catch(() => {});
-      throw new Error('cancelled');
-    }
-    return a;
   }
 
   function succeed(a) {
@@ -86,12 +67,12 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
 
   function fail(a, err) {
     if (a.cancelled || finished) return;
-    console.log(`[login] ${a.kind} login failed: ${errorText(err)}`);
+    console.log(`[login] login failed: ${errorText(err)}`);
     show({ error: friendlyError(err) });
   }
 
   // Two-step verification. A wrong password asks again; anything else ends
-  // this attempt (the user can start over).
+  // this attempt (the user can send a new code).
   async function withPassword(a) {
     let wrong = false;
     await a.client.signInWithPassword(creds, {
@@ -106,60 +87,20 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
     });
   }
 
-  // After Telegram confirms (updateLoginToken), exportLoginToken again
-  // returns the authorization, possibly on another data center.
-  async function finishLink(a) {
-    try {
-      let r = await a.client.invoke(new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }));
-      if (r instanceof Api.auth.LoginTokenMigrateTo) {
-        await a.client._switchDC(r.dcId);
-        r = await a.client.invoke(new Api.auth.ImportLoginToken({ token: r.token }));
-      }
-      if (r instanceof Api.auth.LoginTokenSuccess) return succeed(a);
-      // Still a plain token: not confirmed yet. Keep waiting.
-    } catch (err) {
-      if (errorText(err) === 'SESSION_PASSWORD_NEEDED') {
-        try {
-          await withPassword(a);
-          return succeed(a);
-        } catch (e) {
-          return fail(a, e);
-        }
-      }
-      fail(a, err);
-    }
-  }
-
-  // A fresh tg://login link, valid ~30 s: the UI opens it right away.
-  async function requestLink() {
-    let a = attempt && attempt.kind === 'link' && !attempt.cancelled ? attempt : null;
-    if (!a) {
-      a = await begin('link');
-      a.client.addEventHandler((update) => {
-        if (update instanceof Api.UpdateLoginToken && !a.cancelled) finishLink(a);
-      });
-    }
-    try {
-      const r = await a.client.invoke(new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }));
-      if (r instanceof Api.auth.LoginTokenSuccess) {
-        succeed(a);
-        return null;
-      }
-      if (!(r instanceof Api.auth.LoginToken)) throw new Error('Unexpected answer from Telegram: ' + r.className);
-      show({ method: 'link', error: null });
-      return toLink(r.token);
-    } catch (err) {
-      throw new Error(friendlyError(err));
-    }
-  }
-
+  // A new attempt each time: "Send code" again also fixes a mistyped number.
   async function submitPhone(phone) {
-    const a = await begin('phone');
+    if (finished) throw new Error('Already logged in.');
+    await drop(attempt);
+    const a = { cancelled: false };
+    attempt = a;
     try {
+      a.client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
+      await a.client.connect();
       const sent = await a.client.sendCode(creds, phone);
+      if (a.cancelled) return;
       a.phone = phone;
       a.codeHash = sent.phoneCodeHash;
-      show({ method: 'phone', step: 'code', codeVia: sent.isCodeViaApp ? 'app' : 'sms', error: null });
+      show({ step: 'code', codeVia: sent.isCodeViaApp ? 'app' : 'sms', error: null });
     } catch (err) {
       await drop(a);
       throw new Error(friendlyError(err));
@@ -170,7 +111,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   // that continues in the background (askPassword → state need_password).
   async function submitCode(code) {
     const a = attempt;
-    if (!a || a.kind !== 'phone' || !a.codeHash) throw new Error('Send the phone number first.');
+    if (!a || !a.codeHash) throw new Error('Send the phone number first.');
     const phoneCode = String(code || '').replace(/\D/g, '');
     if (!phoneCode) throw new Error('Type the code from the Telegram app.');
     try {
@@ -189,12 +130,12 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
 
   async function reset() {
     await drop(attempt);
-    view = { method: null };
+    view = { step: 'phone' };
     onStatus(view);
   }
 
   onStatus(view);
-  return { done, requestLink, submitPhone, submitCode, reset };
+  return { done, submitPhone, submitCode, reset };
 }
 
-module.exports = { createLogin, friendlyError, toLink };
+module.exports = { createLogin, friendlyError };

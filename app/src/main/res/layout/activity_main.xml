@@ -52,28 +52,11 @@
                 style="@style/Telemedia.Text"
                 android:text="@string/login_intro" />
 
-            <Button
-                android:id="@+id/login_link"
-                style="@style/Telemedia.Button.Primary"
-                android:layout_marginTop="16dp"
-                android:text="@string/login_link" />
-
-            <TextView
-                android:id="@+id/login_link_hint"
-                style="@style/Telemedia.Text"
-                android:text="@string/login_link_hint" />
-
-            <Button
-                android:id="@+id/login_use_phone"
-                style="@style/Telemedia.Button.Secondary"
-                android:text="@string/login_use_phone" />
-
             <LinearLayout
                 android:id="@+id/phone_group"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
+                android:orientation="vertical">
 
                 <EditText
                     android:id="@+id/phone"

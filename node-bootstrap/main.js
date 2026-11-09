@@ -2,7 +2,7 @@
 //
 // argv[2] = absolute path to config.json in the app's private files dir.
 // config.json: { apiId, apiHash, session?, stremioAdded?, stremioConnected?,
-//                groupsDone?, lanKey?, lanAccountUrl?, stremioAuthKey? }
+//                groupsDone?, lanKey?, phoneId?, ownerName?, stremioLinks? }
 //
 // Flow (everything on this one phone):
 //   1. Control server on 127.0.0.1:7001 for the app screen (GET /status and
@@ -174,26 +174,25 @@ const actions = {
 
   // Stremio: a fresh link.stremio.com link for the "Add to Stremio" button.
   '/stremio/link': async () => ({ link: await stremioPairingLink() }),
-  // Read-only: the addons in the Stremio account (needs the session kept by
-  // "Add to my Stremio account"); names and hosts only, for checking.
-  '/stremio/addons': async () => {
-    const authKey = readConfig().stremioAuthKey;
-    if (!authKey) throw new Error('No Stremio session: tap "Add to my Stremio account" first.');
-    return { addons: await stremioAccount.listAddons(authKey) };
+  // Developer tools (over adb): a connected account's addons (names and
+  // hosts only), and putting the 127.0.0.1 entry back into it.
+  '/stremio/addons': async ({ id }) => ({ addons: await stremioAccount.listAddons(linkFor(id).authKey) }),
+  '/stremio/repair': async ({ id }) => {
+    const manifest = await addonManifest();
+    await stremioAccount.putAddons(linkFor(id).authKey, [
+      { transportUrl: `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`, manifest },
+    ]);
+    return { addons: await stremioAccount.listAddons(linkFor(id).authKey) };
   },
-  // Puts both Telemedia entries back into the account with the kept session
-  // (when a Stremio app dropped them; checking / repair tool).
-  '/stremio/repair': async () => {
-    const authKey = readConfig().stremioAuthKey;
-    if (!authKey) throw new Error('No Stremio session: tap "Add to my Stremio account" first.');
-    await checkLan();
-    await addLanToAccount(authKey, { withLocal: true });
-    return { addons: await stremioAccount.listAddons(authKey) };
-  },
-  // The same for the LAN address (Stremio on other devices).
+  // "Connect a TV": a link.stremio.com link for the TV's Stremio account.
   '/lan/link': async () => {
     if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
     return { link: await lanPairingLink() };
+  },
+  // "Remove": out of that account, and a new key (see removeLink).
+  '/lan/remove': async ({ id }) => {
+    if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
+    return removeLink(String(id || ''));
   },
 
   // Sign this phone out of Telegram (the app restarts us afterwards).
@@ -412,19 +411,26 @@ function startAddon(cfg) {
 
 // ---------------------------------------------------------------------------
 // Other devices (lan.js): the gateway, the phone's Wi-Fi address, and the
-// keyed LAN entry in the user's Stremio account (stremio-account.js), kept up
-// to date when the address changes.
+// Stremio accounts this phone is connected to (stremio-account.js).
+//
+// A phone is a portable server: its owner connects it to any TV's Stremio
+// account ("Connect a TV"), the TV plays through the phone's personal key,
+// and "Remove" takes it out of that account again and scrambles the key, so
+// that TV can't use the old address anymore. The phone's other connected
+// accounts get the new address automatically, as on every Wi-Fi address
+// change (one kept Stremio session per account, app-private).
 // ---------------------------------------------------------------------------
 const LAN_CHECK_MS = 15_000;
 const LAN_RETRY_MS = 2 * 60_000;
 const CERT_CHECK_MS = 6 * 60 * 60_000;
 let gateway = null;
 let certStore = null;
-let lanStatus = { ip: null, url: null, state: 'idle', inAccount: false, needsReadd: false };
+let lanStatus = { ip: null, url: null, secure: false, pairing: { state: 'idle' }, accounts: [] };
 let lanPairing = null; // the newest link login; older ones stop
-let lanRefreshAt = 0;
+const retryAt = new Map(); // link id → next try after a failed update
 let lastLocalStremio = 0; // last Stremio request on 127.0.0.1
 const LOCAL_IN_USE_MS = 10 * 60_000;
+let linksBusy = Promise.resolve(); // account writes one at a time
 
 function lanKey() {
   let key = readConfig().lanKey;
@@ -434,6 +440,33 @@ function lanKey() {
   }
   return key;
 }
+
+// Stable per phone (not per key), so a new key replaces this phone's entry
+// in place, and two people's phones never replace each other's entries.
+function phoneId() {
+  let id = readConfig().phoneId;
+  if (!id) {
+    id = require('crypto').randomBytes(4).toString('hex');
+    patchConfig({ phoneId: id });
+  }
+  return id;
+}
+
+const lanAddonId = () => 'community.telemedia.lan.' + phoneId();
+
+// "Telemedia (Blue's phone)": tells phones apart on a shared TV.
+function lanAddonName() {
+  const owner = readConfig().ownerName;
+  return owner ? `Telemedia (${owner}'s phone)` : 'Telemedia (phone)';
+}
+
+function myLanManifest(manifest) {
+  return lan.lanManifest(manifest, { id: lanAddonId(), name: lanAddonName() });
+}
+
+// What an account entry was last written with; a different one (new app
+// version, new name) means the entry needs rewriting even at the same address.
+const lanEntryTag = () => `${lanAddonId()}|${lanAddonName()}`;
 
 // The address other devices use. HTTPS (local-ip.sh name) once the
 // certificate is there: it works in every Stremio app, including the
@@ -450,21 +483,123 @@ async function addonManifest() {
   return res.json();
 }
 
-// Puts the current LAN address into the account behind authKey.
-// withLocal: also (re-)add the 127.0.0.1 entry, which Stremio on this phone
-// and on a TV running Telemedia use. Only on the user's tap ("Add to my
-// Stremio account"): the first "Add to Stremio" may have gone to another
-// account (the one logged in on the Stremio web page), so make sure this one
-// has both.
-async function addLanToAccount(authKey, { withLocal = false } = {}) {
-  const url = lanUrl(lanStatus.ip);
-  if (!url) throw new Error('Connect the phone to Wi-Fi first.');
-  const manifest = await addonManifest();
-  const entries = [{ transportUrl: url, manifest: lan.lanManifest(manifest) }];
-  if (withLocal) entries.unshift({ transportUrl: `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`, manifest });
-  const result = await stremioAccount.putAddons(authKey, entries);
-  patchConfig({ lanAccountUrl: url });
-  console.log('[lan] Stremio account: ' + result + (withLocal ? ' (with the 127.0.0.1 entry)' : ''));
+// --- connected accounts: config.stremioLinks = [{ id, authKey, userId, user, url, broken? }]
+function readLinks() {
+  return readConfig().stremioLinks || [];
+}
+
+function linkFor(id) {
+  const links = readLinks();
+  const link = id ? links.find((l) => l.id === id) : links[0];
+  if (!link) throw new Error('No connected Stremio account: tap "Connect a TV" first.');
+  return link;
+}
+
+function saveLinks(links) {
+  patchConfig({ stremioLinks: links });
+  publishAccounts();
+}
+
+// For the app screen: never the session keys.
+function publishAccounts() {
+  const url = lanStatus.url;
+  lanStatus = {
+    ...lanStatus,
+    accounts: readLinks().map((l) => ({
+      id: l.id,
+      user: l.user || 'Stremio account',
+      ok: !l.broken && !!url && l.url === url && l.tag === lanEntryTag(),
+      broken: !!l.broken,
+    })),
+  };
+}
+
+// One account write at a time (they read-modify-write the same lists).
+function serialized(fn) {
+  const run = linksBusy.then(fn, fn);
+  linksBusy = run.catch(() => {});
+  return run;
+}
+
+// Earlier versions kept a single session as stremioAuthKey/lanAccountUrl.
+function migrateLinks() {
+  const cfg = readConfig();
+  if (!cfg.stremioAuthKey) return;
+  const links = cfg.stremioLinks || [];
+  if (!links.some((l) => l.authKey === cfg.stremioAuthKey)) {
+    links.push({ id: newLinkId(), authKey: cfg.stremioAuthKey, url: cfg.lanAccountUrl || null });
+  }
+  patchConfig({ stremioLinks: links, stremioAuthKey: undefined, lanAccountUrl: undefined });
+}
+
+const newLinkId = () => require('crypto').randomBytes(4).toString('hex');
+
+// "aviv@gmail.com" → "av…@gmail.com": enough to tell accounts apart.
+function maskEmail(email) {
+  const [name, domain] = String(email || '').split('@');
+  if (!domain) return null;
+  return `${name.slice(0, 2)}…@${domain}`;
+}
+
+async function fillUserNames() {
+  const links = readLinks();
+  let changed = false;
+  for (const l of links) {
+    if (l.user || l.broken) continue;
+    try {
+      const u = await stremioAccount.getUser(l.authKey);
+      l.userId = u.id;
+      l.user = maskEmail(u.email);
+      changed = true;
+    } catch (err) {
+      if (stremioAccount.isAuthError(err)) {
+        l.broken = true;
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveLinks(links);
+}
+
+// Writes the current address into one account. → true when it's up to date.
+async function updateLink(link, url, manifest) {
+  try {
+    const key = lanKey();
+    const result = await stremioAccount.putAddons(link.authKey, [{ transportUrl: url, manifest }], {
+      // Only ever our own entries: this phone's id, or (earlier versions used
+      // one id for every phone) the old id with our address or key in it.
+      replaces: (a) => !!a.manifest && (a.manifest.id === lanAddonId()
+        || (a.manifest.id === 'community.telemedia.lan'
+          && (a.transportUrl === link.url || String(a.transportUrl).includes(`/${key}/`)))),
+    });
+    console.log(`[lan] Stremio account ${link.id}: ${result}`);
+    link.url = url;
+    link.tag = lanEntryTag();
+    link.broken = false;
+    retryAt.delete(link.id);
+    return true;
+  } catch (err) {
+    console.log(`[lan] could not update Stremio account ${link.id}: ${messageOf(err)}`);
+    if (stremioAccount.isAuthError(err)) link.broken = true;
+    retryAt.set(link.id, Date.now() + LAN_RETRY_MS);
+    return false;
+  }
+}
+
+// Brings every connected account to the current address (after a Wi-Fi
+// change, http → https, or a new key).
+function refreshLinks() {
+  return serialized(async () => {
+    const url = lanStatus.url;
+    if (!url) return;
+    const links = readLinks();
+    const tag = lanEntryTag();
+    const stale = links.filter((l) => !l.broken && (l.url !== url || l.tag !== tag) && (retryAt.get(l.id) || 0) < Date.now());
+    if (!stale.length) return;
+    const manifest = myLanManifest(await addonManifest());
+    for (const l of stale) await updateLink(l, url, manifest);
+    saveLinks(links);
+  });
 }
 
 async function checkLan() {
@@ -472,34 +607,20 @@ async function checkLan() {
   if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? 'is now ' + ip : 'gone'));
   const url = lanUrl(ip);
   lanStatus = { ...lanStatus, ip, url, secure: !!url && url.startsWith('https:') };
-  const cfg = readConfig();
-  // The address changed since it was added to Stremio: update the account.
-  if (url && cfg.lanAccountUrl && cfg.lanAccountUrl !== url && Date.now() > lanRefreshAt) {
-    lanRefreshAt = Date.now() + LAN_RETRY_MS;
-    if (!cfg.stremioAuthKey) {
-      lanStatus.needsReadd = true;
-    } else {
-      try {
-        await addLanToAccount(cfg.stremioAuthKey);
-        lanStatus.needsReadd = false;
-        lanStatus.error = null;
-      } catch (err) {
-        console.log('[lan] could not update Stremio: ' + messageOf(err));
-        if (stremioAccount.isAuthError(err)) patchConfig({ stremioAuthKey: undefined });
-        lanStatus.needsReadd = true;
-      }
-    }
-  }
-  lanStatus.inAccount = !!url && readConfig().lanAccountUrl === url;
-  if (lanStatus.inAccount) lanStatus.needsReadd = false;
+  publishAccounts();
+  await refreshLinks();
+  publishAccounts();
 }
 
 function startLan() {
   lanKey();
+  migrateLinks();
   gateway = lan.createGateway({
     port: PUBLIC_PORT,
+    tlsPort: TLS_PORT,
     addonPort: ADDON_INTERNAL_PORT,
     getKey: lanKey,
+    lanManifest: myLanManifest,
     isSelf: (address) => !!address && address === lanStatus.ip,
     // Only when this phone's Stremio really uses the 127.0.0.1 entry right
     // now: "connected" alone can come from the account, and Stremio on a
@@ -517,14 +638,30 @@ function startLan() {
       console.log('[bootstrap] Stremio on this phone is using the addon (LAN entry)');
       markStremioConnected();
     },
-    tlsPort: TLS_PORT,
   });
   certStore = lan.createCertStore(path.dirname(cfgPath));
   if (certStore.get()) gateway.setTls(certStore.get());
   refreshCert();
   setInterval(refreshCert, CERT_CHECK_MS);
+  rememberOwnerName();
+  fillUserNames().catch(() => {});
   checkLan().catch(() => {});
   setInterval(() => checkLan().catch(() => {}), LAN_CHECK_MS);
+}
+
+// The Telegram first name, for "Telemedia (Blue's phone)".
+async function rememberOwnerName() {
+  try {
+    const me = await (await addonTelegram().getClient()).getMe();
+    const name = String(me.firstName || '').trim().slice(0, 24);
+    if (name && readConfig().ownerName !== name) {
+      patchConfig({ ownerName: name });
+      // The entries' tag no longer matches: rewritten with the new name.
+      refreshLinks().catch(() => {});
+    }
+  } catch (err) {
+    console.log('[lan] owner name: ' + messageOf(err));
+  }
 }
 
 // The HTTPS certificate from local-ip.sh (lan.js); without it, other
@@ -536,43 +673,94 @@ function refreshCert() {
       if (!changed && gateway.tlsActive()) return;
       gateway.setTls(certStore.get());
       console.log('[lan] https certificate ' + (changed ? 'updated' : 'loaded'));
-      // Advertise the https address (and update the account) once listening.
+      // Advertise the https address (and update the accounts) once listening.
       setTimeout(() => checkLan().catch(() => {}), 1500);
     })
     .catch((err) => console.log('[lan] no https certificate yet: ' + messageOf(err)));
 }
 
-// "Add to my Stremio account" for other devices: a link.stremio.com link;
-// once the user confirms, the LAN entry is added and the session key kept,
-// so a later address change updates the account without asking again.
+// "Connect a TV": a link.stremio.com link. The TV's owner confirms it, on
+// this phone (the page opens here) or on their own phone (QR code on screen).
+// Then this phone's entry is added to that account and the session kept.
 async function lanPairingLink() {
   await checkLan();
   if (!lanStatus.url) throw new Error('Connect the phone to Wi-Fi first.');
   const { code, link } = await stremioAccount.createLink();
   const run = {};
   lanPairing = run;
-  lanStatus = { ...lanStatus, state: 'waiting', error: null };
+  lanStatus = { ...lanStatus, pairing: { state: 'waiting', link } };
   (async () => {
     const authKey = await stremioAccount.waitForLink(code, () => lanPairing !== run);
     if (lanPairing !== run) return;
     if (!authKey) {
-      lanStatus = { ...lanStatus, state: 'idle' };
+      lanStatus = { ...lanStatus, pairing: { state: 'idle' } };
       return;
     }
-    lanStatus = { ...lanStatus, state: 'installing' };
-    try {
-      await addLanToAccount(authKey, { withLocal: true });
-      const old = readConfig().stremioAuthKey;
-      patchConfig({ stremioAuthKey: authKey });
-      if (old && old !== authKey) stremioAccount.logout(old).catch(() => {});
-      lanStatus = { ...lanStatus, state: 'idle', inAccount: true, needsReadd: false };
-    } catch (err) {
-      console.log('[lan] add to Stremio failed: ' + messageOf(err));
-      stremioAccount.logout(authKey).catch(() => {});
-      lanStatus = { ...lanStatus, state: 'error', error: messageOf(err) };
-    }
-  })().catch(() => {});
+    lanStatus = { ...lanStatus, pairing: { state: 'installing' } };
+    await serialized(async () => {
+      let user = {};
+      try {
+        user = await stremioAccount.getUser(authKey);
+      } catch (err) {
+        console.log('[lan] getUser: ' + messageOf(err));
+      }
+      const links = readLinks();
+      const same = user.id ? links.find((l) => l.userId === user.id) : null;
+      const link = same || { id: newLinkId() };
+      const oldKey = same && same.authKey;
+      Object.assign(link, { authKey, userId: user.id || null, user: maskEmail(user.email), url: null, broken: false });
+      const ok = await updateLink(link, lanStatus.url, myLanManifest(await addonManifest()));
+      if (!ok) {
+        stremioAccount.logout(authKey).catch(() => {});
+        lanStatus = { ...lanStatus, pairing: { state: 'error', error: 'Stremio did not accept the change. Try again.' } };
+        return;
+      }
+      if (!same) links.push(link);
+      saveLinks(links);
+      if (oldKey && oldKey !== authKey) stremioAccount.logout(oldKey).catch(() => {});
+      lanStatus = { ...lanStatus, pairing: { state: 'done', user: link.user } };
+    });
+  })().catch((err) => {
+    console.log('[lan] connect failed: ' + messageOf(err));
+    lanStatus = { ...lanStatus, pairing: { state: 'error', error: messageOf(err) } };
+  });
   return link;
+}
+
+// "Remove": takes this phone's entry out of one account, ends that session,
+// and scrambles the key so that account's TVs can't use the old address. The
+// other connected accounts get the new address.
+function removeLink(id) {
+  return serialized(async () => {
+    const links = readLinks();
+    const link = links.find((l) => l.id === id);
+    if (!link) throw new Error('That account is not connected anymore.');
+    const key = lanKey();
+    let removed = null;
+    let problem = null;
+    try {
+      removed = await stremioAccount.removeAddons(link.authKey, (a) =>
+        (a.manifest && a.manifest.id === lanAddonId())
+        || (a.transportUrl && (a.transportUrl === link.url || a.transportUrl.includes(`/${key}/`))));
+    } catch (err) {
+      problem = stremioAccount.isAuthError(err)
+        ? 'The Stremio session there has ended, so the entry could not be deleted; it no longer works anyway (new key). To tidy up, remove it in Stremio\'s Add-ons on that TV.'
+        : 'Could not reach Stremio to delete the entry; it no longer works anyway (new key).';
+      console.log('[lan] remove: ' + messageOf(err));
+    }
+    stremioAccount.logout(link.authKey).catch(() => {});
+    saveLinks(links.filter((l) => l.id !== id));
+    // Scramble: the old address (and any stream URL with it) stops working now.
+    patchConfig({ lanKey: lan.newKey() });
+    console.log(`[lan] account ${id} removed (${removed || 'not deleted'}), new key`);
+    lanStatus = { ...lanStatus, url: lanUrl(lanStatus.ip) };
+    publishAccounts();
+    return { removed: removed === 'removed', problem };
+  }).then(async (result) => {
+    await refreshLinks();
+    publishAccounts();
+    return result;
+  });
 }
 
 // ---------------------------------------------------------------------------

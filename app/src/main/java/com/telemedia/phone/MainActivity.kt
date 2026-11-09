@@ -101,6 +101,9 @@ class MainActivity : Activity() {
     private lateinit var lanAdd: Button
     private lateinit var lanNote: TextView
     private lateinit var lanError: TextView
+    private lateinit var lanQrCaption: TextView
+    private lateinit var lanAccountsTitle: TextView
+    private lateinit var lanAccounts: LinearLayout
     private lateinit var batteryCard: View
     private lateinit var footer: View
     private lateinit var logout: Button
@@ -108,6 +111,8 @@ class MainActivity : Activity() {
     private var stremioOpened = false
     private var lanOpened = false
     private var shownLanUrl: String? = null
+    private var shownLanQr: String? = null
+    private var shownAccounts: String? = null
     private var manualKeys = false
     private var configCodeShown = false
     private var shownGroups: String? = null
@@ -192,6 +197,9 @@ class MainActivity : Activity() {
         lanAdd = findViewById(R.id.lan_add)
         lanNote = findViewById(R.id.lan_note)
         lanError = findViewById(R.id.lan_error)
+        lanQrCaption = findViewById(R.id.lan_qr_caption)
+        lanAccountsTitle = findViewById(R.id.lan_accounts_title)
+        lanAccounts = findViewById(R.id.lan_accounts)
         batteryCard = findViewById(R.id.battery_card)
         footer = findViewById(R.id.footer)
         logout = findViewById(R.id.logout)
@@ -263,7 +271,7 @@ class MainActivity : Activity() {
         stremioOpen.setOnClickListener { Stremio.open(this) }
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
-        // Other devices: the LAN address into the Stremio account, or copy it.
+        // Other devices: connect a TV's Stremio account (link login), or copy the address.
         lanAdd.setOnClickListener {
             action("/lan/link", JSONObject(), lanAdd, lanError) { reply ->
                 if (openLink(reply.getString("link"))) lanOpened = true
@@ -470,26 +478,87 @@ class MainActivity : Activity() {
 
     private fun renderLan(lan: JSONObject) {
         val url = lan.optStr("url")
-        if (url != shownLanUrl) {
-            shownLanUrl = url.ifEmpty { null }
-            lanUrl.text = url
-            if (url.isNotEmpty()) lanQr.setImageBitmap(qrBitmap(url, 600))
+        val pairing = lan.optJSONObject("pairing") ?: JSONObject()
+        val state = pairing.optStr("state")
+        // While connecting: the Stremio link, for the TV owner's own phone.
+        val link = if (state == "waiting") pairing.optStr("link") else ""
+        val qr = link.ifEmpty { url }
+        shownLanUrl = url.ifEmpty { null }
+        if (qr != shownLanQr) {
+            shownLanQr = qr
+            if (qr.isNotEmpty()) lanQr.setImageBitmap(qrBitmap(qr, 600))
         }
+        val shown = if (qr.isNotEmpty()) View.VISIBLE else View.GONE
+        lanQr.visibility = shown
+        lanQrCaption.visibility = shown
+        lanUrl.visibility = shown
+        lanQrCaption.setText(if (link.isNotEmpty()) R.string.lan_scan_caption else R.string.lan_address_caption)
+        lanUrl.text = qr
         val onWifi = url.isNotEmpty()
-        lanQr.visibility = if (onWifi) View.VISIBLE else View.GONE
-        lanUrl.visibility = if (onWifi) View.VISIBLE else View.GONE
-        lanAdd.isEnabled = onWifi && lan.optStr("state") != "installing"
+        lanAdd.isEnabled = onWifi && state != "installing"
+        val accounts = lan.optJSONArray("accounts") ?: JSONArray()
         val note = when {
             !onWifi -> getString(R.string.lan_no_wifi)
-            lan.optStr("state") == "installing" -> getString(R.string.stremio_installing)
-            lan.optStr("state") == "waiting" && lanOpened -> getString(R.string.stremio_waiting)
-            lan.optBoolean("needsReadd") -> getString(R.string.lan_readd)
-            lan.optBoolean("inAccount") -> getString(R.string.lan_in_account)
+            state == "installing" -> getString(R.string.stremio_installing)
+            state == "waiting" && lanOpened -> getString(R.string.stremio_waiting)
+            state == "done" -> getString(R.string.lan_connected, pairing.optStr("user").ifEmpty { "the account" })
+            (0 until accounts.length()).any { accounts.getJSONObject(it).optBoolean("broken") } -> getString(R.string.lan_reconnect)
             else -> ""
         }
         lanNote.text = note
         lanNote.visibility = if (note.isEmpty()) View.GONE else View.VISIBLE
-        setError(lanError, if (lan.optStr("state") == "error") "Couldn't add it: " + lan.optStr("error") else "")
+        setError(lanError, if (state == "error") "Couldn't connect: " + pairing.optStr("error") else "")
+        renderLanAccounts(accounts)
+    }
+
+    // One row per connected Stremio account: "✓ av…@gmail.com   [Remove]".
+    private fun renderLanAccounts(accounts: JSONArray) {
+        val key = accounts.toString()
+        if (key == shownAccounts) return
+        shownAccounts = key
+        lanAccounts.removeAllViews()
+        lanAccountsTitle.visibility = if (accounts.length() > 0) View.VISIBLE else View.GONE
+        for (i in 0 until accounts.length()) {
+            val account = accounts.getJSONObject(i)
+            val user = account.optStr("user")
+            val mark = when {
+                account.optBoolean("broken") -> "⚠ "
+                account.optBoolean("ok") -> "✓ "
+                else -> "… "
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            row.addView(TextView(this).apply {
+                text = mark + user
+                setTextColor(getColor(R.color.fg))
+                textSize = 16f
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val remove = Button(this, null, 0, R.style.Telemedia_Button_Secondary).apply {
+                setText(R.string.lan_remove)
+                minHeight = dp(48)
+                setPadding(dp(18), 0, dp(18), 0)
+            }
+            remove.setOnClickListener { confirmRemove(account.optStr("id"), user, remove) }
+            row.addView(remove, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            lanAccounts.addView(row)
+        }
+    }
+
+    private fun confirmRemove(id: String, user: String, button: Button) {
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.lan_remove_confirm, user))
+            .setPositiveButton(R.string.lan_remove) { _, _ ->
+                action("/lan/remove", JSONObject().put("id", id), button, lanError) { reply ->
+                    shownAccounts = null
+                    val problem = reply.optStr("problem")
+                    Toast.makeText(this, problem.ifEmpty { getString(R.string.lan_removed) }, Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun qrBitmap(text: String, size: Int): Bitmap {

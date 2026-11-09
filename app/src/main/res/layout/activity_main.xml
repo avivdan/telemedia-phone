@@ -334,6 +334,11 @@
                 style="@style/Telemedia.Text"
                 android:text="@string/lan_intro" />
 
+            <TextView
+                android:id="@+id/lan_qr_caption"
+                style="@style/Telemedia.Text"
+                android:layout_marginTop="14dp" />
+
             <ImageView
                 android:id="@+id/lan_qr"
                 android:layout_width="220dp"
@@ -372,6 +377,20 @@
             <TextView
                 android:id="@+id/lan_error"
                 style="@style/Telemedia.Error" />
+
+            <TextView
+                android:id="@+id/lan_accounts_title"
+                style="@style/Telemedia.CardTitle"
+                android:layout_marginTop="20dp"
+                android:text="@string/lan_accounts_title"
+                android:textSize="16sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/lan_accounts"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
         </LinearLayout>
 
         <!-- Battery optimization (asked once, offered here if declined) -->

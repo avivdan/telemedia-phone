@@ -65,20 +65,21 @@ function stripKey(url, key) {
   return m && sameKey(m[1], key) ? m[2] || '/' : null;
 }
 
-// The manifest other devices get: own id and name, so it sits next to the
-// 127.0.0.1 entry in the Stremio account instead of replacing it.
-function lanManifest(manifest) {
+// The manifest other devices get: its own id and name, so it sits next to
+// the 127.0.0.1 entry in a Stremio account instead of replacing it (and, with
+// an id per phone, next to other people's phones too).
+function lanManifest(manifest, { id, name } = {}) {
   return {
     ...manifest,
-    id: String(manifest.id) + LAN_SUFFIX,
-    name: `${manifest.name} (phone)`,
-    description: `${manifest.description || ''} Served by your phone over Wi-Fi.`.trim(),
+    id: id || String(manifest.id) + LAN_SUFFIX,
+    name: name || `${manifest.name} (phone)`,
+    description: `${manifest.description || ''} Served by a phone over Wi-Fi.`.trim(),
   };
 }
 
 // An addon answer for another device: stream URLs on the keyed LAN address.
-function rewriteBody(path, body, { localBase, keyedBase }) {
-  if (path === '/manifest.json') return JSON.stringify(lanManifest(JSON.parse(body)));
+function rewriteBody(path, body, { localBase, keyedBase, manifest = lanManifest }) {
+  if (path === '/manifest.json') return JSON.stringify(manifest(JSON.parse(body)));
   return body.split(localBase + '/').join(keyedBase + '/');
 }
 
@@ -194,7 +195,11 @@ function createCertStore(dir, source = CERT_SOURCE) {
 // onSelfStremio(): the same on the keyed (LAN) address.
 // activeStreams() → video transfers in progress (for wake/Wi-Fi locks).
 // setTls({ cert, key }) starts (or renews) the HTTPS side on tlsPort.
-function createGateway({ port, tlsPort, addonPort, getKey, isSelf, dedupeSelf, onLocalStremio, onSelfStremio = () => {} }) {
+// lanManifest(manifest) → the manifest other devices see (default: lanManifest).
+function createGateway({
+  port, tlsPort, addonPort, getKey, isSelf, dedupeSelf, onLocalStremio,
+  onSelfStremio = () => {}, lanManifest: manifestFor = lanManifest,
+}) {
   const localBase = `http://127.0.0.1:${port}`;
   let streams = 0;
 
@@ -303,7 +308,7 @@ function createGateway({ port, tlsPort, addonPort, getKey, isSelf, dedupeSelf, o
     if (!host) return notFound();
     const scheme = req.socket.encrypted ? 'https' : 'http';
     const keyedBase = `${scheme}://${host}/${getKey()}`;
-    proxy(req, res, keyed, (p, body) => rewriteBody(p, body, { localBase, keyedBase }));
+    proxy(req, res, keyed, (p, body) => rewriteBody(p, body, { localBase, keyedBase, manifest: manifestFor }));
   };
 
   const server = http.createServer(handle);

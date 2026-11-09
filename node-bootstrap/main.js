@@ -46,6 +46,10 @@ const cfgPath = process.argv[2];
 // The app's secret for the control server, new for every start (NodeService
 // passes it; only the app, which can read its own files, knows it).
 const CONTROL_TOKEN = process.argv[3] || '';
+// Developer tools only (npm run my-groups): a short-lived token that adb
+// pushes into the app's own external folder (Android 11+, where other apps
+// can't read or write it; NodeService passes the folder only there).
+const DEV_DIR = process.argv[4] || '';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const messageOf = (err) => String(err && err.message ? err.message : err);
@@ -180,12 +184,17 @@ const actions = {
   // Developer tools (over adb): a connected account's addons (names and
   // hosts only), and putting the 127.0.0.1 entry back into it.
   '/stremio/addons': async ({ id }) => ({ addons: await stremioAccount.listAddons(linkFor(id).authKey) }),
+  // Only for the phone owner's own account (named explicitly), and in line
+  // with the other account writes.
   '/stremio/repair': async ({ id }) => {
-    const manifest = await addonManifest();
-    await stremioAccount.putAddons(linkFor(id).authKey, [
-      { transportUrl: `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`, manifest },
-    ]);
-    return { addons: await stremioAccount.listAddons(linkFor(id).authKey) };
+    if (!id) throw new Error('Name the account (id from /status).');
+    return serialized(async () => {
+      const manifest = await addonManifest();
+      await stremioAccount.putAddons(linkFor(id).authKey, [
+        { transportUrl: `http://127.0.0.1:${PUBLIC_PORT}/manifest.json`, manifest },
+      ]);
+      return { addons: await stremioAccount.listAddons(linkFor(id).authKey) };
+    });
   },
   // "Connect a TV": a link.stremio.com link for the TV's Stremio account.
   '/lan/link': async () => {
@@ -198,18 +207,26 @@ const actions = {
     return removeLink(String(id || ''));
   },
 
-  // Sign this phone out of Telegram (the app restarts us afterwards).
+  // Sign this phone out of Telegram (the app restarts us afterwards). The
+  // next person to log in must not inherit the TVs: this phone's entries
+  // leave every connected account, those sessions end, and the key changes.
   '/logout': async () => {
-    if (status.state === 'running') {
-      try {
-        const { Api } = require('telegram');
+    try {
+      const { Api } = require('telegram');
+      if (status.state === 'running') {
         const client = await addonTelegram().getClient();
         await Promise.race([client.invoke(new Api.auth.LogOut()), sleep(5000)]);
-      } catch (err) {
-        console.log('[bootstrap] logout: ' + messageOf(err));
+      } else if (readConfig().session) {
+        await Promise.race([revokeSavedSession(), sleep(8000)]);
       }
+    } catch (err) {
+      console.log('[bootstrap] logout: ' + messageOf(err));
     }
-    patchConfig({ session: undefined, groupsDone: undefined });
+    await Promise.race([disconnectAllTvs(), sleep(25_000)]).catch(() => {});
+    patchConfig({
+      session: undefined, groupsDone: undefined, stremioLinks: undefined, ownerName: undefined, lanKey: lan.newKey(),
+    });
+    if (gateway) gateway.dropKeyed();
   },
 
   // The app asks us to stop; it starts a fresh process right after.
@@ -218,20 +235,39 @@ const actions = {
   },
 };
 
-// Who may use the control server: the app (CONTROL_TOKEN), or a developer
-// build's tools over adb (defaults.json devToken, only in `npm run deploy`
-// builds). Never browser pages (they send an Origin) or other host names
-// (DNS rebinding).
+// The developer token, if adb put a fresh one there (at most 15 minutes old).
+function devToken() {
+  if (!DEV_DIR) return '';
+  try {
+    const file = path.join(DEV_DIR, 'dev-token');
+    if (Date.now() - fs.statSync(file).mtimeMs > 15 * 60_000) return '';
+    const token = fs.readFileSync(file, 'utf8').trim();
+    return token.length >= 32 ? token : '';
+  } catch {
+    return '';
+  }
+}
+
+// Who may use the control server: the app (CONTROL_TOKEN), or developer
+// tools over adb (devToken). Never browser pages (they send an Origin) or
+// other host names (DNS rebinding).
 function controlAllowed(req) {
-  if (req.headers.origin) return false;
-  const hostName = String(req.headers.host || '').replace(/:\d+$/, '');
-  if (hostName !== '127.0.0.1' && hostName !== 'localhost') return false;
-  const given = String(req.headers['x-telemedia-token'] || '');
-  const ok = (secret) => {
-    if (!secret || given.length !== secret.length) return false;
-    return require('crypto').timingSafeEqual(Buffer.from(given), Buffer.from(secret));
-  };
-  return ok(CONTROL_TOKEN) || ok(readDefaults().devToken);
+  try {
+    if (req.headers.origin) return false;
+    const hostName = String(req.headers.host || '').replace(/:\d+$/, '');
+    if (hostName !== '127.0.0.1' && hostName !== 'localhost') return false;
+    // Bytes, not characters: a header with non-ASCII characters must not make
+    // timingSafeEqual throw (that would end the whole process).
+    const given = Buffer.from(String(req.headers['x-telemedia-token'] || ''));
+    const ok = (secret) => {
+      if (!secret) return false;
+      const want = Buffer.from(secret);
+      return given.length === want.length && require('crypto').timingSafeEqual(given, want);
+    };
+    return ok(CONTROL_TOKEN) || ok(devToken());
+  } catch {
+    return false;
+  }
 }
 
 function startControlServer() {
@@ -354,6 +390,21 @@ function configForm(failure) {
 // A saved session can be revoked (logged out from another device, expired).
 // Detect that up front so we ask to log in again instead of crash-looping.
 const DEAD_SESSION = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/;
+
+// Logs out the saved Telegram session when the addon (and its client) isn't
+// running, e.g. from the error screen.
+async function revokeSavedSession() {
+  const { TelegramClient, Api } = require('telegram');
+  const { StringSession } = require('telegram/sessions');
+  const cfg = readConfig();
+  const client = new TelegramClient(new StringSession(cfg.session), Number(cfg.apiId), cfg.apiHash, { connectionRetries: 1 });
+  try {
+    await connectOrThrow(client);
+    await client.invoke(new Api.auth.LogOut());
+  } finally {
+    await client.destroy().catch(() => {});
+  }
+}
 
 async function sessionIsValid(cfg) {
   const { TelegramClient } = require('telegram');
@@ -497,7 +548,18 @@ function myLanManifest(manifest) {
 
 // What an account entry was last written with; a different one (new app
 // version, new name) means the entry needs rewriting even at the same address.
-const lanEntryTag = () => `${lanAddonId()}|${lanAddonName()}`;
+let addonVersionCache;
+function addonVersion() {
+  if (addonVersionCache === undefined) {
+    try {
+      addonVersionCache = String(require(path.join(__dirname, 'dist', 'src', 'manifest.js')).manifest.version || '');
+    } catch {
+      addonVersionCache = '';
+    }
+  }
+  return addonVersionCache;
+}
+const lanEntryTag = () => `${lanAddonId()}|${lanAddonName()}|${addonVersion()}`;
 
 // The address other devices use. HTTPS (local-ip.sh name) once the
 // certificate is there: it works in every Stremio app, including the
@@ -589,30 +651,35 @@ function maskEmail(email) {
   return `${name.slice(0, 2)}…@${domain}`;
 }
 
-async function fillUserNames() {
-  const links = readLinks();
-  let changed = false;
-  for (const l of links) {
-    if (l.user || l.broken) continue;
-    try {
-      const u = await stremioAccount.getUser(l.authKey);
-      l.userId = u.id;
-      l.user = maskEmail(u.email);
-      changed = true;
-    } catch (err) {
-      if (stremioAccount.isAuthError(err)) {
-        l.broken = true;
+// Names for accounts that have none yet (from older versions). In line with
+// the other account writes, so it can't undo a Connect or a Remove.
+function fillUserNames() {
+  return serialized(async () => {
+    const links = readLinks();
+    let changed = false;
+    for (const l of links) {
+      if (l.user || l.broken) continue;
+      try {
+        const u = await stremioAccount.getUser(l.authKey);
+        l.userId = u.id;
+        l.user = maskEmail(u.email);
         changed = true;
+      } catch (err) {
+        if (stremioAccount.isAuthError(err)) {
+          l.broken = true;
+          changed = true;
+        }
       }
     }
-  }
-  if (changed) saveLinks(links);
+    if (changed) saveLinks(links);
+  });
 }
 
 // Writes the current address into one account. → true when it's up to date.
 // → 'ok' | 'missing' (automatic update, but the user removed the entry in
 // Stremio: leave it removed) | 'failed'.
 async function updateLink(link, url, manifest, { automatic = false } = {}) {
+  if (!url) return 'failed';
   try {
     const key = lanKey();
     const result = await stremioAccount.putAddons(link.authKey, [{ transportUrl: url, manifest }], {
@@ -644,20 +711,22 @@ async function updateLink(link, url, manifest, { automatic = false } = {}) {
 // then forgotten), never swaps an https address for http (smart-TV apps
 // would lose it; a "Connect a TV" tap still writes whatever is current), and
 // never writes a guessed address.
+const targetUrl = (link, url, key) => lan.accountTargetUrl(link.url, url, key, ipSource);
+
 function refreshLinks() {
   return serialized(async () => {
     const url = lanStatus.url;
-    if (!url || ipSource !== 'interfaces') return;
+    const key = lanKey();
     let links = readLinks();
     const tag = lanEntryTag();
-    const stale = links.filter((l) => !l.broken && (l.url !== url || l.tag !== tag)
-      && !(l.url && l.url.startsWith('https:') && url.startsWith('http:'))
-      && (retryAt.get(l.id) || 0) < Date.now());
+    const stale = links
+      .map((l) => ({ l, to: targetUrl(l, url, key) }))
+      .filter(({ l, to }) => !l.broken && to && (l.url !== to || l.tag !== tag) && (retryAt.get(l.id) || 0) < Date.now());
     if (!stale.length) return;
     const manifest = myLanManifest(await addonManifest());
     const gone = [];
-    for (const l of stale) {
-      if ((await updateLink(l, url, manifest, { automatic: true })) === 'missing') gone.push(l);
+    for (const { l, to } of stale) {
+      if ((await updateLink(l, to, manifest, { automatic: true })) === 'missing') gone.push(l);
     }
     for (const l of gone) {
       console.log(`[lan] account ${l.id}: removed in Stremio, forgetting it`);
@@ -669,6 +738,13 @@ function refreshLinks() {
 }
 
 async function checkLan() {
+  await updateAddress();
+  await refreshLinks();
+  publishAccounts();
+}
+
+// The phone's address and the https state, without touching any account.
+async function updateAddress() {
   const found = await lan.lanAddress().catch(() => ({ ip: null, source: 'interfaces' }));
   const ip = found.ip;
   if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? `is now ${ip} (${found.source})` : 'gone'));
@@ -680,8 +756,15 @@ async function checkLan() {
     : { state: 'waiting', error: lanStatus.tls && lanStatus.tls.error };
   lanStatus = { ...lanStatus, ip, url, secure: !!url && url.startsWith('https:'), tls };
   publishAccounts();
-  await refreshLinks();
-  publishAccounts();
+  expirePairingNote();
+}
+
+// "Connected to …" and connect errors are shown for a while, not forever.
+function expirePairingNote() {
+  const p = lanStatus.pairing || {};
+  if ((p.state === 'done' || p.state === 'error') && Date.now() - (p.at || 0) > 3 * 60_000) {
+    lanStatus = { ...lanStatus, pairing: { state: 'idle' } };
+  }
 }
 
 function startLan() {
@@ -763,7 +846,7 @@ function refreshCert() {
 // this phone (the page opens here) or on their own phone (QR code on screen).
 // Then this phone's entry is added to that account and the session kept.
 async function lanPairingLink() {
-  await checkLan();
+  await updateAddress();
   if (!lanStatus.url) throw new Error('Connect the phone to Wi-Fi first.');
   const { code, link } = await stremioAccount.createLink();
   const run = {};
@@ -777,32 +860,54 @@ async function lanPairingLink() {
       return;
     }
     lanStatus = { ...lanStatus, pairing: { state: 'installing' } };
+    const fail = (error) => {
+      lanStatus = { ...lanStatus, pairing: { state: 'error', error, at: Date.now() } };
+    };
     await serialized(async () => {
-      let user = {};
+      // Which account, before writing anything: without it the same account
+      // could end up listed twice.
+      let user;
       try {
         user = await stremioAccount.getUser(authKey);
       } catch (err) {
         console.log('[lan] getUser: ' + messageOf(err));
       }
-      const links = readLinks();
-      const same = user.id ? links.find((l) => l.userId === user.id) : null;
+      if (!user || !user.id) {
+        stremioAccount.logout(authKey).catch(() => {});
+        return fail('Could not tell which Stremio account that is. Try again.');
+      }
+      // The confirmation can come minutes later: still on Wi-Fi?
+      await updateAddress();
+      if (!lanStatus.url) {
+        stremioAccount.logout(authKey).catch(() => {});
+        return fail('Connect the phone to Wi-Fi first, then try again.');
+      }
+      let links = readLinks();
+      const same = links.find((l) => l.userId === user.id);
       const link = same || { id: newLinkId() };
       const oldKey = same && same.authKey;
-      Object.assign(link, { authKey, userId: user.id || null, user: maskEmail(user.email), url: null, broken: false });
+      Object.assign(link, { authKey, userId: user.id, user: maskEmail(user.email), url: null, broken: false });
       const result = await updateLink(link, lanStatus.url, myLanManifest(await addonManifest()));
-      if (result !== 'ok') {
+      if (result !== 'ok' && link.broken) {
+        // Stremio refused this session: nothing was written.
         stremioAccount.logout(authKey).catch(() => {});
-        lanStatus = { ...lanStatus, pairing: { state: 'error', error: 'Stremio did not accept the change. Try again.' } };
-        return;
+        return fail('Stremio did not accept the change. Try again.');
       }
+      // Kept even if the write's check failed (it may have gone through): the
+      // next update rewrites the entry, or forgets the account if it's not there.
       if (!same) links.push(link);
+      // An old row for the same account whose session ended (from an older
+      // version, so without an account id): this connection replaces it.
+      const stale = links.filter((l) => l.broken && !l.userId);
+      if (stale.length === 1) links = links.filter((l) => l !== stale[0]);
       saveLinks(links);
       if (oldKey && oldKey !== authKey) stremioAccount.logout(oldKey).catch(() => {});
-      lanStatus = { ...lanStatus, pairing: { state: 'done', user: link.user } };
+      if (result !== 'ok') return fail('Stremio is slow to answer: Telemedia will finish adding it by itself.');
+      lanStatus = { ...lanStatus, pairing: { state: 'done', user: link.user, at: Date.now() } };
     });
   })().catch((err) => {
     console.log('[lan] connect failed: ' + messageOf(err));
-    lanStatus = { ...lanStatus, pairing: { state: 'error', error: messageOf(err) } };
+    lanStatus = { ...lanStatus, pairing: { state: 'error', error: messageOf(err), at: Date.now() } };
   });
   return link;
 }
@@ -830,16 +935,35 @@ function removeLink(id) {
     }
     stremioAccount.logout(link.authKey).catch(() => {});
     saveLinks(links.filter((l) => l.id !== id));
-    // Scramble: the old address (and any stream URL with it) stops working now.
+    // Scramble: the old address (and any stream URL with it) stops working now,
+    // including videos that TV is playing at this moment.
     patchConfig({ lanKey: lan.newKey() });
+    if (gateway) gateway.dropKeyed();
     console.log(`[lan] account ${id} removed (${removed || 'not deleted'}), new key`);
-    lanStatus = { ...lanStatus, url: lanUrl(lanStatus.ip) };
+    lanStatus = { ...lanStatus, url: lanUrl(lanStatus.ip), pairing: { state: 'idle' } };
     publishAccounts();
     return { removed: removed === 'removed', problem };
-  }).then(async (result) => {
-    await refreshLinks();
-    publishAccounts();
+  }).then((result) => {
+    // The other accounts get the new key in the background (the list shows it).
+    refreshLinks().then(publishAccounts, (err) => console.log('[lan] update after remove: ' + messageOf(err)));
     return result;
+  });
+}
+
+// Logout: this phone's entries out of every connected account, sessions ended.
+function disconnectAllTvs() {
+  return serialized(async () => {
+    const key = lanKey();
+    for (const l of readLinks()) {
+      try {
+        await stremioAccount.removeAddons(l.authKey, (a) =>
+          (a.manifest && a.manifest.id === lanAddonId())
+          || (a.transportUrl && (a.transportUrl === l.url || a.transportUrl.includes(`/${key}/`))));
+      } catch (err) {
+        console.log(`[lan] logout: account ${l.id}: ${messageOf(err)}`);
+      }
+      stremioAccount.logout(l.authKey).catch(() => {});
+    }
   });
 }
 

@@ -55,6 +55,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   const creds = { apiId, apiHash };
 
   let attempt = null; // { client, phone, codeHash, cancelled }: the latest working "Send code"
+  const pending = new Set(); // attempts still sending their code
   let finished = false;
   let resolveDone;
   let rejectDone;
@@ -72,6 +73,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   async function drop(a) {
     if (!a) return;
     a.cancelled = true;
+    pending.delete(a);
     if (attempt === a) attempt = null;
     if (a.client) await a.client.destroy().catch(() => {});
   }
@@ -80,6 +82,8 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
     if (a.cancelled || finished) return;
     finished = true;
     attempt = null;
+    pending.delete(a);
+    for (const other of pending) drop(other); // resends still under way
     resolveDone(a.client);
   }
 
@@ -90,6 +94,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
     const a = attempt;
     attempt = null;
     if (a) drop(a);
+    for (const other of pending) drop(other);
     rejectDone(new KeyRejectedError(errorText(err)));
   }
 
@@ -121,23 +126,29 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
 
   // A new attempt each time: "Send code" again also fixes a mistyped number.
   // The previous attempt stays usable until the new code has really been sent.
+  // The new attempt only becomes "the" attempt once its code was sent; until
+  // then a code already typed for the previous one still works. If that
+  // previous one logs in meanwhile, the new one is simply dropped.
   async function submitPhone(phone) {
     if (finished) throw new Error('Already logged in.');
-    const prev = attempt;
     const a = { cancelled: false };
-    attempt = a;
+    pending.add(a);
     try {
       a.client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
       await connectOrThrow(a.client);
       const sent = await a.client.sendCode(creds, phone);
-      if (a.cancelled) return;
+      if (a.cancelled || finished) {
+        await drop(a);
+        return;
+      }
       a.phone = phone;
       a.codeHash = sent.phoneCodeHash;
-      if (prev) await drop(prev);
+      const prev = attempt;
+      attempt = a;
+      if (prev && prev !== a) await drop(prev);
       show({ step: 'code', codeVia: sent.isCodeViaApp ? 'app' : 'sms', error: null });
     } catch (err) {
       await drop(a);
-      if (prev && !prev.cancelled) attempt = prev;
       if (KEY_REJECTED.test(errorText(err))) {
         keyRejected(err);
         throw new Error(friendlyError(err));

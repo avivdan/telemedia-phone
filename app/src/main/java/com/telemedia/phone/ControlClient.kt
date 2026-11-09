@@ -51,6 +51,8 @@ object ControlClient {
         val text = (if (ok) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
         val json = try { JSONObject(text) } catch (e: Exception) { JSONObject() }
         Reply(ok, json, json.optString("error").ifBlank { "Something went wrong (${conn.responseCode})" })
+    } catch (e: java.net.SocketTimeoutException) {
+        Reply(false, JSONObject(), "Still working on it: check again in a moment.")
     } catch (e: Exception) {
         Reply(false, JSONObject(), "Telemedia isn't responding. Tap Restart.")
     }

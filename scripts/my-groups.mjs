@@ -8,18 +8,16 @@
 // Only public chats (t.me link) or invite links can be suggested to others.
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-// The control server only answers the app, or developer builds' tools with
-// the token `npm run deploy` baked in (and saved here).
-const tokenFile = join(dirname(fileURLToPath(import.meta.url)), '..', 'node-staging', 'dev-token');
-if (!existsSync(tokenFile)) {
-  console.error('No developer token: install a developer build first (npm run deploy).');
-  process.exit(1);
-}
-const token = readFileSync(tokenFile, 'utf8').trim();
+// The control server only answers the app, or a short-lived developer token
+// that adb puts into the app's own external folder (Android 11+; Telemedia
+// accepts it for 15 minutes). Removed again at the end.
+const token = randomBytes(24).toString('hex');
+const DEV_FILE = '/sdcard/Android/data/com.telemedia.phone/files/dev-token';
 
 const args = process.argv.slice(2);
 const invites = args.includes('--invites');
@@ -27,10 +25,19 @@ const serial = args.find((a) => !a.startsWith('--')) || process.env.PHONE_ADB_SE
 const adb = (cmd) => execSync(`adb ${serial ? `-s ${serial} ` : ''}${cmd}`, { encoding: 'utf8' }).trim();
 const LOCAL = 17001;
 
+const local = mkdtempSync(join(tmpdir(), 'telemedia-'));
+writeFileSync(join(local, 'dev-token'), token);
+adb(`push "${join(local, 'dev-token')}" ${DEV_FILE}`);
+rmSync(local, { recursive: true, force: true });
 adb(`forward tcp:${LOCAL} tcp:7001`);
 const unforward = () => {
   try {
     adb(`forward --remove tcp:${LOCAL}`);
+  } catch {
+    // already gone
+  }
+  try {
+    adb(`shell rm -f ${DEV_FILE}`);
   } catch {
     // already gone
   }

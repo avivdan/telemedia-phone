@@ -9,8 +9,6 @@
 // toolchain.mjs), so deploys and release APKs can replace each other.
 
 import { execSync, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildEnv } from './toolchain.mjs';
@@ -56,11 +54,6 @@ try {
 } catch {
   // not installed yet
 }
-
-// Developer access for scripts/my-groups.mjs (not in release builds).
-env.TELEMEDIA_DEV_TOKEN = randomBytes(16).toString('hex');
-mkdirSync(join(root, 'node-staging'), { recursive: true });
-writeFileSync(join(root, 'node-staging', 'dev-token'), env.TELEMEDIA_DEV_TOKEN);
 
 // --- build -------------------------------------------------------------------
 run(`node "${join(here, 'bundle-node.mjs')}"`, { env });

@@ -85,7 +85,7 @@
     <string name="lan_tls_waiting">Smart-TV Stremio apps (Hisense VIDAA, LG, Samsung) need the secure (https) address, and it isn\'t ready yet. Telemedia keeps trying. Android TV and computers work now.</string>
     <string name="lan_tls_blocked">This network\'s router blocks the secure (https) address (DNS protection), so smart-TV Stremio apps (VIDAA, LG, Samsung) can\'t use it here. Android TV and computers work.</string>
     <string name="lan_no_wifi">Connect the phone to Wi-Fi to use Telemedia on a TV.</string>
-    <string name="lan_reconnect">That account\'s Stremio session ended: tap Connect a TV and log in to it again, or Remove it.</string>
+    <string name="lan_reconnect">The Stremio session of an account marked ⚠ has ended: tap Connect another TV and log in to that account again, or remove it.</string>
 
     <string name="battery_text">Let Telemedia run in the background, so videos don\'t stop while you watch.</string>
     <string name="battery_allow">Allow</string>
@@ -97,6 +97,7 @@
     <string name="stopped_text">Nothing runs in the background. Stremio on this phone and on your TVs can\'t play from it until you start it again.</string>
     <string name="start">Start Telemedia</string>
     <string name="logout">Log out of Telegram</string>
+    <string name="logout_confirm">Log this phone out of Telegram? Telemedia also leaves the Stremio accounts of the TVs it\'s connected to, so whoever logs in next doesn\'t get them.</string>
 
     <string name="notification_channel">Telemedia addon</string>
     <string name="notification_title">Telemedia is running</string>

@@ -135,9 +135,7 @@ const defaults = {
   groups: headStartGroups(),
   starter: scramble(starterKey()),
 };
-// Developer builds only (npm run deploy): lets scripts/my-groups.mjs use the
-// phone's control server over adb. Release builds never set it.
-if (process.env.TELEMEDIA_DEV_TOKEN) defaults.devToken = process.env.TELEMEDIA_DEV_TOKEN;
+
 writeFileSync(join(stage, 'defaults.json'), JSON.stringify(defaults));
 console.log(
   (defaults.starter ? 'Bundled: starter key for automatic setup' : 'Bundled: no starter key (setup by hand)') +

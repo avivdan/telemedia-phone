@@ -26,7 +26,6 @@ if (!/^\d+\.\d{1,2}\.\d{1,2}$/.test(version)) {
 }
 
 const env = { ...buildEnv({ requireSigning: true }), TELEMEDIA_VERSION: version };
-delete env.TELEMEDIA_DEV_TOKEN; // no developer access in releases
 const run = (cmd, opts = {}) => {
   console.log(`\n> ${cmd}`);
   execSync(cmd, { stdio: 'inherit', ...opts });

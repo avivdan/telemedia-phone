@@ -34,9 +34,10 @@ class NodeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // "Stop" in the notification.
-        if (intent?.action == ACTION_STOP) {
-            AppConfig.setStopped(this, true)
+        // "Stop" in the notification, or stopped meanwhile (e.g. a restart that
+        // was under way when the user tapped Stop): stay stopped.
+        if (intent?.action == ACTION_STOP || AppConfig.isStopped(this)) {
+            if (intent?.action == ACTION_STOP) AppConfig.setStopped(this, true)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -57,12 +58,17 @@ class NodeService : Service() {
             // (its own files) knows it, so other apps and web pages can't use it.
             val token = ByteArray(24).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
             ControlClient.tokenFile(this).writeText(token)
+            // Developer tools put a short-lived token in the app's external
+            // folder over adb; only from Android 11, where other apps can't
+            // read or write that folder.
+            val devDir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) getExternalFilesDir(null)?.absolutePath else null
             val code = NodeBridge.startNodeWithArguments(
                 arrayOf(
                     "node",
                     File(project, "main.js").absolutePath,
                     AppConfig.file(this).absolutePath,
                     token,
+                    devDir ?: "",
                 ),
             )
             Log.w(TAG, "node exited with code $code")
@@ -191,9 +197,11 @@ class NodeService : Service() {
             ctx.stopService(Intent(ctx, NodeService::class.java))
         }
 
-        /** Kill the ":node" process (if any) and start a fresh one. Call off the main thread. */
+        /**
+         * Kill the ":node" process (if any) and start a fresh one. Call off the
+         * main thread. Doesn't touch the stop flag: a Stop tapped meanwhile wins.
+         */
         fun restart(ctx: Context) {
-            AppConfig.setStopped(ctx, false)
             ControlClient.post(ctx, "/exit", "{}", readTimeoutMs = 2000)
             Thread.sleep(800)
             val am = ctx.getSystemService(ActivityManager::class.java)

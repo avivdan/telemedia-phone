@@ -135,6 +135,18 @@ async function lanAddress() {
 // the keyless 127.0.0.1 address.
 const STREMIO_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*(strem\.io|stremio\.com)$/i;
 
+// The address a connected Stremio account should have now: the current one
+// when it may be written automatically (a real Wi-Fi address, and never https
+// → http), else the account's own address with just the current key, so a
+// new key always reaches every account. null: nothing to write.
+function accountTargetUrl(linkUrl, currentUrl, key, ipSource) {
+  const allowed = currentUrl && ipSource === 'interfaces'
+    && !(linkUrl && linkUrl.startsWith('https:') && currentUrl.startsWith('http:'));
+  if (allowed) return currentUrl;
+  if (!linkUrl) return null;
+  return linkUrl.replace(/\/[A-Za-z0-9_-]{16,64}\/manifest\.json$/, `/${key}/manifest.json`);
+}
+
 // ---------------------------------------------------------------------------
 // The local-ip.sh certificate (see the top of this file).
 // ---------------------------------------------------------------------------
@@ -211,6 +223,7 @@ function createGateway({
 }) {
   const localBase = `http://127.0.0.1:${port}`;
   let streams = 0;
+  const keyedOpen = new Set(); // answers in progress on the keyed address
 
   // cors: answers for other devices' browsers (web-based Stremio apps) carry
   // CORS headers on every response, video included (the addon's own video
@@ -353,6 +366,8 @@ function createGateway({
     if (!host) return notFound();
     const scheme = req.socket.encrypted ? 'https' : 'http';
     const keyedBase = `${scheme}://${host}/${getKey()}`;
+    keyedOpen.add(res);
+    res.on('close', () => keyedOpen.delete(res));
     const onVideo = self ? null : (status) => {
       const range = req.headers.range ? ` ${req.headers.range}` : '';
       const origin = req.headers.origin ? ` origin=${req.headers.origin}` : '';
@@ -379,10 +394,24 @@ function createGateway({
     tlsServer.on('error', (err) => console.error('[lan] https gateway error: ' + err.message));
     tlsServer.listen(tlsPort, '0.0.0.0', () => console.log('[lan] https on port ' + tlsPort));
   }
-  return { server, setTls, tlsActive: () => !!(tlsServer && tlsServer.listening), tlsServer: () => tlsServer, activeStreams: () => streams };
+  // After a new key: end every transfer that came in with the old one (a
+  // removed TV must not keep playing what it already started).
+  function dropKeyed() {
+    for (const res of keyedOpen) res.destroy();
+    keyedOpen.clear();
+  }
+  return {
+    server,
+    setTls,
+    dropKeyed,
+    tlsActive: () => !!(tlsServer && tlsServer.listening),
+    tlsServer: () => tlsServer,
+    activeStreams: () => streams,
+  };
 }
 
 module.exports = {
+  accountTargetUrl,
   checkCert,
   createCertStore,
   tlsHostname,

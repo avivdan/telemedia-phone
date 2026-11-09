@@ -213,9 +213,14 @@ BootReceiver → starts NodeService on boot, once set up
   at every start, writes to the app's files (`control.token`) and passes to
   Node; `ControlClient` sends it as `X-Telemedia-Token`. Requests with an
   `Origin` (browser pages) or another host name (DNS rebinding) are refused.
-  `npm run deploy` builds also accept a developer token (`defaults.json`
-  `devToken`, saved in `node-staging/dev-token` for `npm run my-groups`);
-  release builds have none.
+  `npm run my-groups` gets in with a short-lived developer token instead:
+  it pushes a random one over adb into the app's own external folder
+  (`Android/data/com.telemedia.phone/files/dev-token`, Android 11+ only, where
+  other apps can't reach it), Node accepts it for 15 minutes, and the script
+  deletes it at the end. No token is ever inside the APK.
+- **Log out of Telegram** also takes this phone out of every connected
+  Stremio account, ends those sessions and changes the key, so whoever logs
+  in next doesn't inherit the TVs.
 - The keyless addon address (127.0.0.1:7000) is for Stremio on the phone:
   browser pages on the phone are refused (only Stremio's own web origins may
   call it), and so are other host names. Other *apps* on the phone can still

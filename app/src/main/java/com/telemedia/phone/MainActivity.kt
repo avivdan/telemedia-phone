@@ -122,6 +122,9 @@ class MainActivity : Activity() {
     private var shownGroups: String? = null
     private val groupChecks = mutableMapOf<String, Boolean>()
     private var restartingUntil = 0L
+    // Since when nothing has answered: Restart only after a while, so it can't
+    // interrupt the first unpacking after an install or update.
+    private var silentSince = 0L
     // Errors from the last action, shown until the next action on that card.
     private val actionErrors = mutableMapOf<TextView, String>()
     // Buttons whose request is still running: the poll must not re-enable them.
@@ -296,7 +299,10 @@ class MainActivity : Activity() {
         }
 
         findViewById<Button>(R.id.battery_allow).setOnClickListener { requestBatteryExemption() }
-        findViewById<Button>(R.id.restart).setOnClickListener { restartNode() }
+        findViewById<Button>(R.id.restart).setOnClickListener {
+            AppConfig.setStopped(this, false)
+            restartNode()
+        }
         findViewById<Button>(R.id.stop).setOnClickListener {
             AlertDialog.Builder(this)
                 .setMessage(R.string.stop_confirm)
@@ -316,7 +322,7 @@ class MainActivity : Activity() {
         }
         logout.setOnClickListener {
             AlertDialog.Builder(this)
-                .setMessage("Log this phone out of Telegram?")
+                .setMessage(R.string.logout_confirm)
                 .setPositiveButton(R.string.logout) { _, _ ->
                     action("/logout", JSONObject(), logout, null) { restartNode() }
                 }
@@ -375,10 +381,16 @@ class MainActivity : Activity() {
         for (card in cards) card.visibility = if (card in visible) View.VISIBLE else View.GONE
         status.text = text ?: ""
         status.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        // Restart is always there (it fixes most hiccups), except when stopped.
+        // Restart fixes most hiccups; while nothing answers yet it appears only
+        // after 30 s (the first start after an install unpacks for a while).
+        // Stop is there in every state.
+        val silent = state == "offline" || state == "starting"
+        if (!silent) silentSince = 0L else if (silentSince == 0L) silentSince = System.currentTimeMillis()
+        val restartVisible = !silent || System.currentTimeMillis() - silentSince > 30_000
         footer.visibility = if (state == "stopped") View.GONE else View.VISIBLE
+        findViewById<Button>(R.id.restart).visibility = if (restartVisible) View.VISIBLE else View.GONE
         logout.visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
-        findViewById<Button>(R.id.stop).visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
+        findViewById<Button>(R.id.stop).visibility = View.VISIBLE
     }
 
     private fun renderLogin(view: JSONObject) {
@@ -541,14 +553,17 @@ class MainActivity : Activity() {
         if (lanAdd !in inFlight) lanAdd.setText(if (connected) R.string.lan_remove_main else R.string.lan_add)
         lanAddAnother.visibility = if (connected) View.VISIBLE else View.GONE
         lanAddAnother.isEnabled = onWifi && state != "installing" && lanAddAnother !in inFlight
+        val doneUser = pairing.optStr("user")
+        val stillConnected = (0 until accounts.length()).any { accounts.getJSONObject(it).optStr("user") == doneUser }
+        // Problems first; "Connected to …" only while that account is still listed.
         val note = when {
             !onWifi -> getString(R.string.lan_no_wifi)
             state == "installing" -> getString(R.string.stremio_installing)
             state == "waiting" && lanOpened -> getString(R.string.stremio_waiting)
-            state == "done" -> getString(R.string.lan_connected, pairing.optStr("user").ifEmpty { "the account" })
             (0 until accounts.length()).any { accounts.getJSONObject(it).optBoolean("broken") } -> getString(R.string.lan_reconnect)
             !lan.optBoolean("secure") && lan.optJSONObject("tls")?.optStr("state") == "blocked" -> getString(R.string.lan_tls_blocked)
             !lan.optBoolean("secure") -> getString(R.string.lan_tls_waiting)
+            state == "done" && stillConnected -> getString(R.string.lan_connected, doneUser.ifEmpty { "the account" })
             else -> ""
         }
         lanNote.text = note

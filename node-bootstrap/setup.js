@@ -79,10 +79,10 @@ async function fetchOwnKeys({ starterClient, starter, onStep, askPassword, passw
       const own = new TelegramClient(new StringSession(''), Number(keys.apiId), keys.apiHash, {
         connectionRetries: 5,
       });
-      await connectOrThrow(own);
       let reuse = password();
       let wrong = false;
       try {
+        await connectOrThrow(own); // inside the try: the client is destroyed even if this fails
         await own.signInUserWithQrCode(
           { apiId: Number(keys.apiId), apiHash: keys.apiHash },
           {

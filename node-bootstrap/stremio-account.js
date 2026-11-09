@@ -21,8 +21,10 @@ const POLL_MS = 3000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function getJson(url, init) {
-  const res = await fetch(url, init);
+// Every call to Stremio gives up after 20 s (a slow network must not leave
+// an action hanging).
+async function getJson(url, init = {}) {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
   return res.json();
 }
 
@@ -122,6 +124,7 @@ function mergeEntries(addons, entries, replaces, onlyReplace = false) {
 // → 'installed' | 'already-installed' | 'missing' (onlyReplace and none of
 // ours is there anymore: the user removed it in Stremio).
 async function putAddons(authKey, entries, { replaces, onlyReplace = false } = {}) {
+  if (entries.some((e) => !e.transportUrl)) throw new Error('no address to write');
   const addons = await readCollection(authKey);
   if (onlyReplace && !(replaces && addons.some((a) => replaces(a)))) return 'missing';
   const next = mergeEntries(addons, entries, replaces, onlyReplace);

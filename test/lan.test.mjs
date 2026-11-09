@@ -59,6 +59,12 @@ before(async () => {
         res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Range': 'bytes 0-3/10' });
         return res.end('abcd');
       }
+      // A long video: keeps sending until the client goes away.
+      if (req.url.startsWith('/stream/-100123/77')) {
+        res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Length': '100000000' });
+        const timer = setInterval(() => res.write('x'.repeat(1024)), 20);
+        return res.on('close', () => clearInterval(timer));
+      }
       // A Telegram error mid-file: fewer bytes than promised, then the connection drops.
       if (req.url.startsWith('/stream/-100123/99')) {
         res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Length': '100', 'Content-Range': 'bytes 0-99/100' });
@@ -150,6 +156,33 @@ test('from the network: 404 without the right key', async (t) => {
   assert.equal((await get(ip, '/stream/-100123/45/a.mkv')).status, 404);
   assert.equal((await get(ip, `/${'x'.repeat(22)}/manifest.json`)).status, 404);
   assert.equal((await get(ip, `/${KEY}/manifest.json`)).status, 200);
+});
+
+test('a new key reaches every account, without guessed addresses or https → http', () => {
+  const t = lan.accountTargetUrl;
+  const https = `https://192-168-0-4.local-ip.sh:7443/${KEY}/manifest.json`;
+  const NEW = 'NewKey_0123456789abcdef';
+  // normal: the current address
+  assert.equal(t(https, `https://192-168-0-9.local-ip.sh:7443/${NEW}/manifest.json`, NEW, 'interfaces'), `https://192-168-0-9.local-ip.sh:7443/${NEW}/manifest.json`);
+  // no https → http: same address, new key only
+  assert.equal(t(https, `http://192.168.0.4:7000/${NEW}/manifest.json`, NEW, 'interfaces'), `https://192-168-0-4.local-ip.sh:7443/${NEW}/manifest.json`);
+  // guessed address: same address, new key only
+  assert.equal(t(https, `https://10-0-0-7.local-ip.sh:7443/${NEW}/manifest.json`, NEW, 'route'), `https://192-168-0-4.local-ip.sh:7443/${NEW}/manifest.json`);
+  // off Wi-Fi: same address, new key only; nothing known: nothing to write
+  assert.equal(t(https, null, NEW, 'interfaces'), `https://192-168-0-4.local-ip.sh:7443/${NEW}/manifest.json`);
+  assert.equal(t(null, null, NEW, 'interfaces'), null);
+});
+
+test('after a new key, transfers that started with the old one are cut', async () => {
+  const done = new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port, path: `/${KEY}/stream/-100123/77/slow.mkv`, headers: { Host: `192.168.1.20:${port}` } }, (res) => {
+      res.on('data', () => {});
+      res.on('close', () => resolve(res.complete));
+    }).on('error', () => resolve(false));
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  gateway.dropKeyed();
+  assert.equal(await done, false);
 });
 
 test('key and address helpers', () => {

@@ -621,6 +621,13 @@ class MainActivity : Activity() {
             val box = lanAccounts.findViewWithTag<View>(id)
                 ?: layoutInflater.inflate(R.layout.lan_account_row, lanAccounts, false).also {
                     it.tag = id
+                    // Fitted again whenever its width changes: the first layout,
+                    // split screen, a resized window. (Not during that layout
+                    // pass: a new text size asks for another one.)
+                    it.findViewById<TextView>(R.id.lan_account_user)
+                        .addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+                            if (right > left && right - left != oldRight - oldLeft) v.post { fitOneLine(v as TextView) }
+                        }
                     lanAccounts.addView(it)
                 }
             // The whole email, kept with its mark; split before the "@" only
@@ -649,34 +656,18 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Shrinks [view]'s text from 16sp (down to 12sp) until it fits on one line:
-     * now if the view has its width, else right after its first layout.
+     * Shrinks [view]'s text from 16sp (down to 12sp) until it fits on one line.
+     * Before its first layout (no width yet) the box's layout listener does it.
      */
     private fun fitOneLine(view: TextView) {
-        val fit = {
-            val room = view.width - view.totalPaddingLeft - view.totalPaddingRight
-            var sp = 16f
+        val room = view.width - view.totalPaddingLeft - view.totalPaddingRight
+        if (room <= 0) return
+        var sp = 16f
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        while (sp > 12f && view.paint.measureText(view.text, 0, view.text.length) > room) {
+            sp -= 0.5f
             view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
-            while (sp > 12f && view.paint.measureText(view.text, 0, view.text.length) > room) {
-                sp -= 0.5f
-                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
-            }
         }
-        if (view.width > 0) {
-            fit()
-            return
-        }
-        view.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
-            override fun onLayoutChange(
-                v: View, left: Int, top: Int, right: Int, bottom: Int,
-                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
-            ) {
-                if (view.width <= 0) return
-                view.removeOnLayoutChangeListener(this)
-                // Not during this layout pass: a new size asks for another one.
-                view.post { fit() }
-            }
-        })
     }
 
     private fun confirmRemove(id: String, user: String) {

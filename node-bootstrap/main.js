@@ -668,26 +668,41 @@ const SHORTENED_NAME = /…@/;
 
 // Names for accounts that have none yet, or only the shortened one an older
 // version saved. In line with the other account writes, so it can't undo a
-// Connect or a Remove.
+// Connect or a Remove. Stremio not answering: tried again in 2 minutes, then
+// less often (at most hourly) while it keeps failing.
+const NAMES_RETRY_FIRST_MS = 2 * 60_000;
+const NAMES_RETRY_MAX_MS = 60 * 60_000;
+let namesRetry = null;
+let namesRetryMs = NAMES_RETRY_FIRST_MS;
 function fillUserNames() {
+  clearTimeout(namesRetry);
+  namesRetry = null;
   return serialized(async () => {
-    const links = readLinks();
-    let changed = false;
-    for (const l of links) {
+    const found = new Map(); // link id → fields to set
+    let again = false;
+    for (const l of readLinks()) {
       if ((l.user && !SHORTENED_NAME.test(l.user)) || l.broken) continue;
       try {
         const u = await stremioAccount.getUser(l.authKey);
-        l.userId = u.id;
-        l.user = accountName(u.email) || l.user;
-        changed = true;
+        found.set(l.id, { userId: u.id, user: accountName(u.email) || l.user });
       } catch (err) {
-        if (stremioAccount.isAuthError(err)) {
-          l.broken = true;
-          changed = true;
-        }
+        console.log(`[lan] account ${l.id}: name: ${messageOf(err)}`); // the id, never the email
+        if (stremioAccount.isAuthError(err)) found.set(l.id, { broken: true });
+        else again = true;
       }
     }
-    if (changed) saveLinks(links);
+    // Into the list as it is now: a logout may have cleared it meanwhile (it
+    // doesn't wait in this line), and its accounts must not come back.
+    const links = readLinks();
+    const hits = links.filter((l) => found.has(l.id));
+    for (const l of hits) Object.assign(l, found.get(l.id));
+    if (hits.length) saveLinks(links);
+    if (again) {
+      namesRetry = setTimeout(() => fillUserNames().catch(() => {}), namesRetryMs);
+      namesRetryMs = Math.min(namesRetryMs * 2, NAMES_RETRY_MAX_MS);
+    } else {
+      namesRetryMs = NAMES_RETRY_FIRST_MS;
+    }
   });
 }
 

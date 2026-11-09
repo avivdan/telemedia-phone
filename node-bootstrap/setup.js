@@ -14,6 +14,7 @@
 
 const myTelegram = require('./tv/my-telegram');
 const { parseCode } = require('./tv/starter-login');
+const { connectOrThrow } = require('./login');
 
 const SERVICE_USER_ID = '777000'; // the "Telegram" chat that delivers login codes
 const CODE_TIMEOUT = 90_000;
@@ -78,7 +79,7 @@ async function fetchOwnKeys({ starterClient, starter, onStep, askPassword, passw
       const own = new TelegramClient(new StringSession(''), Number(keys.apiId), keys.apiHash, {
         connectionRetries: 5,
       });
-      await own.connect();
+      await connectOrThrow(own);
       let reuse = password();
       let wrong = false;
       try {

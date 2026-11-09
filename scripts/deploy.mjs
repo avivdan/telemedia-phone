@@ -9,6 +9,8 @@
 // toolchain.mjs), so deploys and release APKs can replace each other.
 
 import { execSync, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildEnv } from './toolchain.mjs';
@@ -43,8 +45,25 @@ if (!serial) {
 }
 const adb = (args) => `adb -s ${serial} ${args}`;
 
+// Same version as the one installed (e.g. a release), so the deploy can
+// replace it: Android refuses a lower versionCode.
+try {
+  const installed = (capture(adb(`shell dumpsys package ${PKG}`)).match(/versionName=(\d+\.\d+\.\d+)/) || [])[1];
+  if (installed && !env.TELEMEDIA_VERSION) {
+    env.TELEMEDIA_VERSION = installed;
+    console.log(`Building as version ${installed} (installed on the phone)`);
+  }
+} catch {
+  // not installed yet
+}
+
+// Developer access for scripts/my-groups.mjs (not in release builds).
+env.TELEMEDIA_DEV_TOKEN = randomBytes(16).toString('hex');
+mkdirSync(join(root, 'node-staging'), { recursive: true });
+writeFileSync(join(root, 'node-staging', 'dev-token'), env.TELEMEDIA_DEV_TOKEN);
+
 // --- build -------------------------------------------------------------------
-run(`node "${join(here, 'bundle-node.mjs')}"`);
+run(`node "${join(here, 'bundle-node.mjs')}"`, { env });
 // Absolute path: cmd.exe may not search the cwd (NoDefaultCurrentDirectoryInExePath).
 const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 run(`"${gradlew}" assembleRelease --console=plain -q`, { cwd: root, env });

@@ -1,8 +1,10 @@
 # Telemedia for Android phones
 
 Watch movies and series from your Telegram channels and groups in
-[Stremio](https://www.stremio.com), on your Android phone. Everything runs on
-the phone: no computer, no TV, no second device.
+[Stremio](https://www.stremio.com): on your Android phone, and on any TV or
+computer on the same Wi-Fi. The phone is the server: everyone uses their own
+phone with their own Telegram, and can connect it to a TV and disconnect it
+again. No computer and no cloud.
 
 ## What you need
 
@@ -17,10 +19,10 @@ the phone: no computer, no TV, no second device.
    asks once to allow installing apps from that app (Files, Chrome, …): allow,
    then **Install**.
 2. **Open Telemedia** and allow notifications (it shows that it is running).
-3. **Log in to Telegram:** tap **Use my phone number**, type your number, tap
-   **Send code**. Telegram sends a code to your Telegram app (chat
-   *Telegram*): type it in Telemedia and tap **Log in**. If your account has a
-   two-step verification password, type it too.
+3. **Log in to Telegram:** type your Telegram phone number (with the country
+   code, e.g. +972 …) and tap **Send code**. Telegram sends a code to your
+   Telegram app (chat *Telegram*): type it in Telemedia and tap **Log in**. If
+   your account has a two-step verification password, type it too.
    Telemedia then gets your own Telegram API key by itself (about a minute).
    You'll see a "login code" message in the *Telegram* chat: nothing to do,
    Telemedia reads it.
@@ -38,22 +40,34 @@ If Telemedia doesn't show up in Stremio yet, close Stremio and open it again.
 Still not there? Stremio on the phone is logged in to another account: tap
 **Add to Stremio again** in Telemedia and log in with that account.
 
-## Watch on your TV or computer too
+## Watch on a TV or computer
 
-The phone can also serve Stremio on other devices on the same Wi-Fi (a TV, a
-PC), like a small home server.
+The phone can serve Stremio on any TV or computer on the same Wi-Fi, like a
+small home server: your own TV, or a friend's.
 
-1. In Telemedia, under **Use from another device**, tap **Add to my Stremio
-   account** and confirm on the Stremio page. Stremio on every device logged
-   in to **that account** gets **Telemedia (phone)** (check that the TV's
-   Stremio uses the same account).
-   Or, in Stremio on the other device, paste the address shown under the QR
-   code into the Add-ons search box and install it.
+1. In Telemedia, under **Use on a TV or computer**, tap **Connect a TV**.
+   Then either:
+   - log in to **that TV's Stremio account** on the page that opens and
+     confirm, or
+   - let the TV's owner scan the code shown in Telemedia with **their own
+     phone** and confirm there (no password typed on your phone).
+   Stremio on every device logged in to that account now lists
+   **Telemedia (*your name*'s phone)**.
 2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
    the screen off.
+3. **Done with that TV?** Tap **Remove** next to its account in Telemedia. That
+   deletes Telemedia from that Stremio account and gives your phone a new
+   personal key, so that TV can't use your phone anymore. Your other connected
+   accounts (your own TV) get the new key by themselves.
+
+The list in Telemedia shows every connected Stremio account. If the phone's
+Wi-Fi address changes (another network, a new IP), Telemedia updates all of
+them by itself. If you remove Telemedia inside Stremio instead, it stays
+removed.
 
 It works in every Stremio app: Android TV, the PC app, web.stremio.com and
-the smart-TV apps (Hisense VIDAA, LG, Samsung). The address looks like
+the smart-TV apps (tested on Hisense VIDAA; LG and Samsung use the same kind
+of app). The address looks like
 `https://192-168-0-104.local-ip.sh:7443/<key>/manifest.json`: your phone's
 Wi-Fi IP with dashes, and a personal key. Without the key, the phone answers
 nothing to the network. Don't share it.
@@ -61,23 +75,26 @@ nothing to the network. Don't share it.
 Why `local-ip.sh`: Stremio's web-based apps (smart TVs, web.stremio.com)
 only load `https://` add-ons. [local-ip.sh](https://local-ip.sh) is a free
 public service: the name `192-168-0-104.local-ip.sh` simply points to
-192.168.0.104, and it hands out a valid certificate for such names. If
-local-ip.sh can't be reached when the app starts for the first time, the
-address is plain `http://<phone-ip>:7000/<key>/…` instead (fine for the
-Android and PC apps, not for smart-TV apps) and it switches by itself once
-the certificate arrives.
+192.168.0.104, and it hands out a valid certificate for such names. Two cases
+where smart-TV apps can't use it (Telemedia says so on its screen, and
+Android TV and computers still work over plain `http`):
+- local-ip.sh can't be reached the first time the app starts: Telemedia keeps
+  trying (after 30 s, then less and less often) and switches by itself.
+- The router blocks such names ("DNS rebinding protection", common on some
+  routers and ad blockers): allow `local-ip.sh` in its settings. To check,
+  open the address in the TV's web browser: it should show some text, not
+  "can't find the server".
 
-**Give the phone a fixed address.** The address contains the phone's Wi-Fi IP.
-If it changes, Telemedia updates your Stremio account by itself, but it's
-simplest to set a *DHCP reservation* for the phone in your router (often
-under LAN / DHCP settings: pick the phone, "reserve IP" or "static lease").
-On Android also set *Wi-Fi → your network → Privacy → Use device MAC*, or the
-phone may show up with a new MAC (and IP) after a while.
+**Give the phone a fixed address at home.** The address contains the phone's
+Wi-Fi IP. It's simplest to set a *DHCP reservation* for the phone in your
+router (often under LAN / DHCP settings: pick the phone, "reserve IP" or
+"static lease"). On Android also set *Wi-Fi → your network → Privacy → Use
+device MAC*, or the phone may show up with a new MAC (and IP) after a while.
 
 On a device that runs its own Telemedia (the TV app), you see both: its own
-**Telemedia** and **Telemedia (phone)**. To use only the phone there,
-uninstall the Telemedia TV app. Don't remove **Telemedia** in Stremio's
-Add-ons: that removes it from the whole account, including the phone.
+**Telemedia** and your phone's. To use only the phone there, uninstall the
+Telemedia TV app. Don't remove **Telemedia** (without "phone") in Stremio's
+Add-ons: that removes it from the whole account, including your phone.
 
 **Outside home?** Not built in. One option: install
 [Tailscale](https://tailscale.com) on the phone and the other device, and use
@@ -87,6 +104,9 @@ the phone's Tailscale IP in the address instead.
 
 - Nothing to do: Telemedia runs in the background (see its notification) and
   starts by itself when the phone turns on.
+- **Stop Telemedia** (in the app, or **Stop** in its notification) stops it
+  completely: nothing runs, TVs can't use the phone. It stays stopped, also
+  after a restart of the phone, until you tap **Start Telemedia**.
 - **Restart** in the app fixes most hiccups.
 - **Log out of Telegram** signs the phone out. You can also sign it out from
   Telegram: *Settings → Devices*.
@@ -94,7 +114,10 @@ the phone's Tailscale IP in the address instead.
 
 ## Good to know
 
-- Your Telegram login stays on the phone. It's only sent to Telegram.
+- Your Telegram login stays on the phone. It's only sent to Telegram. It is
+  not backed up or copied to a new phone: on a new phone, log in again.
+- Only Telemedia itself can control it: other apps and web pages on the phone
+  can't (each start makes a new secret only the app knows).
 - Other devices on your Wi-Fi can only use Telemedia with the address that
   has your personal key in it. The `https` in it does not make it private:
   local-ip.sh's certificate key is public by design, so treat it like plain
@@ -156,18 +179,50 @@ BootReceiver → starts NodeService on boot, once set up
   so this is reachability, not secrecy; the path key is the access control.
   Routers with DNS-rebinding protection may refuse such names; then use the
   http address.
-- "Add to my Stremio account" (`stremio-account.js`) is the link login again,
-  but the Stremio session key is kept (app-private) so that when the Wi-Fi IP
-  (or http → https) changes the entry is replaced in place. If that session
-  stops working, the app asks to add it again. It also re-adds the 127.0.0.1
-  entry: the first "Add to Stremio" goes to whatever account is logged in on
-  the Stremio web page, which may not be the account of the phone's Stremio
-  app (seen in testing). The app only shows "All set" once Stremio on the
-  phone actually calls Telemedia (127.0.0.1 or its LAN address).
+- **Connected accounts** (`stremio-account.js`, `config.stremioLinks`):
+  "Connect a TV" is the link login (link.stremio.com; the page opens on the
+  phone, and its QR code is shown for the TV owner's own phone). The phone's
+  entry is added to that account and the session key kept (app-private), one
+  per account (`getUser` tells accounts apart). Every account is updated when
+  the address, http/https or the key changes; automatic updates only replace
+  this phone's existing entry (never re-add one the user removed in Stremio,
+  never swap https for http, never write a guessed address). "Remove" deletes
+  the entry, logs that session out and makes a new LAN key; the remaining
+  accounts get the new address.
+- **One entry per phone:** id `community.telemedia.lan.<phoneId>` (random,
+  stable per phone) and name "Telemedia (<Telegram first name>'s phone)", so
+  several people's phones can sit in one TV account. Updates match only this
+  phone's id (or, for entries from older versions with the shared id
+  `community.telemedia.lan`, this phone's key or address).
+- The first "Add to Stremio" (the 127.0.0.1 entry, `stremio-link.js`) goes to
+  whatever account is logged in on the Stremio web page, which may not be the
+  phone's Stremio app's account (seen in testing). The app only says "All
+  set" once Stremio on the phone actually calls Telemedia (127.0.0.1 or its
+  LAN address).
 - Every request from the network is logged (`[lan] from <ip>: METHOD path`,
-  key removed): `adb logcat -s TelemediaNode | grep "\[lan\]"`.
-- While a video streams, `NodeService` holds a partial wake lock and a Wi-Fi
-  lock (it polls `activeStreams` in `/status`).
+  video requests with their answer; key removed):
+  `adb logcat -s TelemediaNode | grep "\[lan\]"`.
+- While a video streams, `NodeService` holds a partial wake lock (renewed,
+  30-minute safety timeout) and a Wi-Fi lock (it polls `activeStreams` in
+  `/status`; a failed poll changes nothing).
+
+**Who may talk to the phone.**
+- The control server (127.0.0.1:7001) needs a secret that `NodeService` makes
+  at every start, writes to the app's files (`control.token`) and passes to
+  Node; `ControlClient` sends it as `X-Telemedia-Token`. Requests with an
+  `Origin` (browser pages) or another host name (DNS rebinding) are refused.
+  `npm run deploy` builds also accept a developer token (`defaults.json`
+  `devToken`, saved in `node-staging/dev-token` for `npm run my-groups`);
+  release builds have none.
+- The keyless addon address (127.0.0.1:7000) is for Stremio on the phone:
+  browser pages on the phone are refused (only Stremio's own web origins may
+  call it), and so are other host names. Other *apps* on the phone can still
+  use it, as with the TV app (Stremio needs it keyless).
+- **Stop Telemedia** stops the service; the `:node` process ends in
+  `onDestroy`, and a `stopped` flag file keeps it stopped (boot receiver,
+  opening the app) until Start/Restart.
+- Nothing is backed up or moved to a new phone (`allowBackup="false"`,
+  `data_extraction_rules.xml`).
 
 **Build and install** (Android SDK with NDK and CMake 3.22.1, JDK 17; both
 found under `%LOCALAPPDATA%\Android` if `JAVA_HOME`/`ANDROID_HOME` aren't set):
@@ -175,8 +230,9 @@ found under `%LOCALAPPDATA%\Android` if `JAVA_HOME`/`ANDROID_HOME` aren't set):
 ```bash
 npm run libnode                          # once: Node runtime → app/libnode/
 npm test                                 # unit tests (no network)
-npm run deploy -- 192.168.0.50:41234     # bundle, build, adb install, start
-npm run release -- 0.1.0                 # signed APK in release/
+npm run deploy -- 192.168.0.50:41234     # bundle, build, adb install, start (keeps the installed version number)
+npm run my-groups [-- --invites]         # your chats, to choose head-start groups (developer builds)
+npm run release -- 0.2.0                 # signed APK in release/
 ```
 
 Wireless debugging: on the phone, *Developer options → Wireless debugging →

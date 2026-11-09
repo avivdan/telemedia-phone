@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import java.io.File
+import java.security.SecureRandom
 
 /**
  * Foreground service that hosts Node (the addon). Runs in the ":node" process
@@ -52,11 +53,16 @@ class NodeService : Service() {
     private fun runNode() {
         try {
             val project = NodeProject.ensureExtracted(this)
+            // A new secret for the control server at every start: only this app
+            // (its own files) knows it, so other apps and web pages can't use it.
+            val token = ByteArray(24).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
+            ControlClient.tokenFile(this).writeText(token)
             val code = NodeBridge.startNodeWithArguments(
                 arrayOf(
                     "node",
                     File(project, "main.js").absolutePath,
                     AppConfig.file(this).absolutePath,
+                    token,
                 ),
             )
             Log.w(TAG, "node exited with code $code")
@@ -79,33 +85,43 @@ class NodeService : Service() {
         Process.killProcess(Process.myPid())
     }
 
-    // Polls the bootstrap for active video transfers (lan.js gateway).
+    // Polls the bootstrap for active video transfers (lan.js gateway). A failed
+    // poll changes nothing: the locks follow the last real answer.
     private fun watchStreams() {
         while (true) {
-            val active = ControlClient.status()?.optInt("activeStreams") ?: 0
-            try {
-                setAwake(active > 0)
-            } catch (e: Exception) {
-                Log.w(TAG, "wake lock", e)
+            val status = ControlClient.status(this)
+            if (status != null) {
+                try {
+                    setAwake(status.optInt("activeStreams") > 0)
+                } catch (e: Exception) {
+                    Log.w(TAG, "wake lock", e)
+                }
             }
             Thread.sleep(5000)
         }
     }
 
+    // Both locks are made once. While streaming, every poll renews the wake
+    // lock's safety timeout; each lock is released on its own.
     @Suppress("DEPRECATION") // WIFI_MODE_FULL_HIGH_PERF: still the one that works with the screen off
+    @Synchronized
     private fun setAwake(on: Boolean) {
-        if (on && wakeLock?.isHeld != true) {
-            wakeLock = getSystemService(PowerManager::class.java)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Telemedia:stream")
-                .apply { setReferenceCounted(false); acquire(4 * 60 * 60 * 1000L) }
-            wifiLock = applicationContext.getSystemService(WifiManager::class.java)
-                ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Telemedia:stream")
-                ?.apply { setReferenceCounted(false); acquire() }
-            Log.i(TAG, "streaming: holding wake and Wi-Fi locks")
-        } else if (!on && wakeLock?.isHeld == true) {
-            wakeLock?.release()
-            wifiLock?.takeIf { it.isHeld }?.release()
-            Log.i(TAG, "no streams: released locks")
+        val wake = wakeLock ?: getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Telemedia:stream")
+            .apply { setReferenceCounted(false) }
+            .also { wakeLock = it }
+        val wifi = wifiLock ?: applicationContext.getSystemService(WifiManager::class.java)
+            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Telemedia:stream")
+            ?.apply { setReferenceCounted(false) }
+            ?.also { wifiLock = it }
+        if (on) {
+            if (!wake.isHeld) Log.i(TAG, "streaming: holding wake and Wi-Fi locks")
+            wake.acquire(30 * 60 * 1000L)
+            if (wifi != null && !wifi.isHeld) wifi.acquire()
+        } else {
+            if (wake.isHeld || wifi?.isHeld == true) Log.i(TAG, "no streams: released locks")
+            if (wake.isHeld) wake.release()
+            if (wifi?.isHeld == true) wifi.release()
         }
     }
 
@@ -155,12 +171,17 @@ class NodeService : Service() {
         @Volatile
         private var started = false
 
+        /** Safe to call often; a start the system refuses (background limits) is logged, not a crash. */
         fun start(ctx: Context) {
             val intent = Intent(ctx, NodeService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ctx.startForegroundService(intent)
-            } else {
-                ctx.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ctx.startForegroundService(intent)
+                } else {
+                    ctx.startService(intent)
+                }
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "could not start the addon service now", e)
             }
         }
 
@@ -173,7 +194,7 @@ class NodeService : Service() {
         /** Kill the ":node" process (if any) and start a fresh one. Call off the main thread. */
         fun restart(ctx: Context) {
             AppConfig.setStopped(ctx, false)
-            ControlClient.post("/exit", "{}")
+            ControlClient.post(ctx, "/exit", "{}", readTimeoutMs = 2000)
             Thread.sleep(800)
             val am = ctx.getSystemService(ActivityManager::class.java)
             am.runningAppProcesses

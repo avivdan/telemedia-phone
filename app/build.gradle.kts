@@ -93,13 +93,17 @@ dependencies {
 // Zip the staged Node project (npm run bundle) into assets.
 val nodeStage = rootProject.file("node-staging/nodejs-project")
 val zipNodeProject by tasks.registering(Zip::class) {
-    doFirst {
-        if (!nodeStage.resolve("main.js").exists()) {
-            throw GradleException("Node project not staged. Run `npm run bundle` first.")
-        }
-    }
     from(nodeStage)
     archiveFileName.set("nodejs-project.zip")
     destinationDirectory.set(layout.buildDirectory.dir("generated/nodeAssets"))
 }
-tasks.named("preBuild") { dependsOn(zipNodeProject) }
+// Checked here, not in the Zip task: with nothing staged, that task is
+// skipped as having no input and its own checks never run.
+tasks.named("preBuild") {
+    dependsOn(zipNodeProject)
+    doFirst {
+        if (!nodeStage.resolve("main.js").exists() || !nodeStage.resolve("node_modules/telegram").exists()) {
+            throw GradleException("Node project not staged. Run `npm run bundle` first.")
+        }
+    }
+}

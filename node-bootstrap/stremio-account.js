@@ -91,11 +91,13 @@ async function writeCollection(authKey, next) {
 // Pure: the collection with each entry ({ transportUrl, manifest }) added or
 // refreshed. replaces(addon) marks our own older entries of the same kind
 // (another address, an older id): the first one is updated in place, any
-// further copies dropped. Everything else is untouched.
-function mergeEntries(addons, entries, replaces) {
+// further copies dropped. Everything else is untouched. onlyReplace: never
+// append (automatic updates must not bring back an entry the user removed).
+function mergeEntries(addons, entries, replaces, onlyReplace = false) {
   let next = addons;
   for (const { transportUrl, manifest } of entries) {
     const old = replaces ? next.findIndex((a) => replaces(a)) : -1;
+    if (old === -1 && onlyReplace) continue;
     if (old !== -1) {
       const cur = next[old];
       const m = cur.manifest || {};
@@ -116,10 +118,13 @@ function mergeEntries(addons, entries, replaces) {
   return next;
 }
 
-// Adds or refreshes entries, one write for all. → 'installed' | 'already-installed'
-async function putAddons(authKey, entries, { replaces } = {}) {
+// Adds or refreshes entries, one write for all.
+// → 'installed' | 'already-installed' | 'missing' (onlyReplace and none of
+// ours is there anymore: the user removed it in Stremio).
+async function putAddons(authKey, entries, { replaces, onlyReplace = false } = {}) {
   const addons = await readCollection(authKey);
-  const next = mergeEntries(addons, entries, replaces);
+  if (onlyReplace && !(replaces && addons.some((a) => replaces(a)))) return 'missing';
+  const next = mergeEntries(addons, entries, replaces, onlyReplace);
   if (next === addons) return 'already-installed';
   const saved = await writeCollection(authKey, next);
   for (const { transportUrl } of entries) {

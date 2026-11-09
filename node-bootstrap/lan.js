@@ -31,6 +31,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const path = require('path');
+const { pipeline } = require('stream');
 
 const LAN_SUFFIX = '.lan';
 const STREMIO_RESOURCE = /^\/(catalog|meta|stream|subtitles)\/[^/]+\/[^/]+\.json/;
@@ -121,10 +122,18 @@ function lanFromRoute() {
   });
 }
 
+// → { ip, source }. source 'route' is a guess (it may be a VPN or mobile-data
+// address): fine to show, never written into Stremio accounts by itself.
 async function lanAddress() {
   const ip = lanFromInterfaces();
-  return ip === undefined ? lanFromRoute() : ip;
+  if (ip !== undefined) return { ip, source: 'interfaces' };
+  return { ip: await lanFromRoute(), source: 'route' };
 }
+
+// Stremio's own web apps (web.stremio.com, app.strem.io, the smart-TV shells
+// such as https://relvhgchz5.strem.io): the only browser pages allowed to use
+// the keyless 127.0.0.1 address.
+const STREMIO_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*(strem\.io|stremio\.com)$/i;
 
 // ---------------------------------------------------------------------------
 // The local-ip.sh certificate (see the top of this file).
@@ -203,7 +212,16 @@ function createGateway({
   const localBase = `http://127.0.0.1:${port}`;
   let streams = 0;
 
-  function proxy(req, res, path, rewrite) {
+  // cors: answers for other devices' browsers (web-based Stremio apps) carry
+  // CORS headers on every response, video included (the addon's own video
+  // route sets none). onVideo(status): log hook for the first response.
+  function proxy(req, res, path, rewrite, { cors = false, onVideo = null } = {}) {
+    const corsHeaders = cors
+      ? {
+        'access-control-allow-origin': '*',
+        'access-control-expose-headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
+      }
+      : {};
     const headers = { ...req.headers, host: `127.0.0.1:${addonPort}` };
     if (rewrite) delete headers['accept-encoding']; // need a plain body to rewrite
     const isVideo = /^\/stream\/[^/]+\/\d+/.test(path) && !/\.json$/.test(path.split('?')[0]);
@@ -218,6 +236,7 @@ function createGateway({
     const up = http.request(
       { host: '127.0.0.1', port: addonPort, method: req.method, path, headers },
       (ur) => {
+        if (isVideo && onVideo) onVideo(ur.statusCode);
         const type = String(ur.headers['content-type'] || '');
         if (rewrite && ur.statusCode === 200 && /json/.test(type)) {
           const chunks = [];
@@ -229,21 +248,37 @@ function createGateway({
             } catch (err) {
               console.log('[lan] rewrite failed: ' + err.message);
             }
-            const out = { ...ur.headers, 'content-length': Buffer.byteLength(body) };
+            const out = { ...corsHeaders, ...ur.headers, 'content-length': Buffer.byteLength(body) };
             delete out['content-encoding'];
             delete out['transfer-encoding'];
             res.writeHead(ur.statusCode, out);
             res.end(body);
           });
+          // The addon gave up mid-answer: don't leave the caller waiting.
+          ur.on('close', () => {
+            if (ur.complete) return;
+            if (!res.headersSent) {
+              res.writeHead(502, corsHeaders);
+              res.end();
+            } else {
+              res.destroy();
+            }
+          });
           return;
         }
-        res.writeHead(ur.statusCode, ur.headers);
-        ur.pipe(res);
+        res.writeHead(ur.statusCode, { ...corsHeaders, ...ur.headers });
+        // pipeline, not pipe: when the addon's video download stops early
+        // (a Telegram error mid-file), the player's connection is reset, so it
+        // retries instead of waiting on a half-sent response.
+        pipeline(ur, res, (err) => {
+          if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') console.log('[lan] transfer ended: ' + err.message);
+          else if (err && !ur.complete && !res.writableFinished) console.log('[lan] transfer cut off');
+        });
       },
     );
     up.on('error', () => {
       release();
-      if (!res.headersSent) res.writeHead(502);
+      if (!res.headersSent) res.writeHead(502, corsHeaders);
       res.end();
     });
     res.on('close', () => {
@@ -262,9 +297,10 @@ function createGateway({
     };
 
     const keyed = stripKey(url, getKey());
+    const isVideoPath = keyed !== null && /^\/stream\/[^/]+\/\d+/.test(keyed) && !/\.json$/.test(keyed.split('?')[0]);
     // Every request from the network, for troubleshooting other devices
-    // (never the key; video chunks once per transfer, below).
-    if (!isLoopback(from) && !isSelf(from) && !(keyed && /^\/stream\/[^/]+\/\d+/.test(keyed))) {
+    // (never the key; video requests are logged with their answer, below).
+    if (!isLoopback(from) && !isSelf(from) && !isVideoPath) {
       const origin = req.headers.origin ? ` origin=${req.headers.origin}` : '';
       const pna = req.headers['access-control-request-private-network'] ? ' private-network-preflight' : '';
       console.log(`[lan] from ${from}: ${req.method} ${keyed === null ? '(no key) ' + shortPath(url.split('/').slice(0, 3).join('/')) : shortPath(keyed)}${origin}${pna}`);
@@ -284,8 +320,17 @@ function createGateway({
     }
 
     if (keyed === null) {
-      // No (or a wrong) key: only this phone itself.
+      // No (or a wrong) key: only this phone itself, and not web pages open
+      // on it: a browser request has an Origin (only Stremio's own web apps
+      // pass), and a page using DNS rebinding sends its own host name.
       if (!isLoopback(from)) return notFound();
+      const hostName = String(req.headers.host || '').replace(/:\d+$/, '');
+      if (hostName !== '127.0.0.1' && hostName !== 'localhost') return notFound();
+      if (req.headers.origin && !STREMIO_ORIGIN.test(req.headers.origin)) {
+        console.log(`[lan] refused a browser page on this phone: ${req.headers.origin}`);
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        return res.end('Forbidden');
+      }
       if (STREMIO_RESOURCE.test(url)) {
         console.log(`[lan] local ${shortPath(url)}`);
         onLocalStremio(url);
@@ -308,7 +353,15 @@ function createGateway({
     if (!host) return notFound();
     const scheme = req.socket.encrypted ? 'https' : 'http';
     const keyedBase = `${scheme}://${host}/${getKey()}`;
-    proxy(req, res, keyed, (p, body) => rewriteBody(p, body, { localBase, keyedBase, manifest: manifestFor }));
+    const onVideo = self ? null : (status) => {
+      const range = req.headers.range ? ` ${req.headers.range}` : '';
+      const origin = req.headers.origin ? ` origin=${req.headers.origin}` : '';
+      console.log(`[lan] from ${from}: ${req.method} video${range} → ${status}${origin}`);
+    };
+    proxy(req, res, keyed, (p, body) => rewriteBody(p, body, { localBase, keyedBase, manifest: manifestFor }), {
+      cors: true,
+      onVideo,
+    });
   };
 
   const server = http.createServer(handle);

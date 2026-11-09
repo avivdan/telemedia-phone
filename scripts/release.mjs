@@ -20,18 +20,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
 const version = (process.argv[2] || '').replace(/^v/, '');
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
+if (!/^\d+\.\d{1,2}\.\d{1,2}$/.test(version)) {
   console.error('Usage: npm run release -- <version>   e.g. 0.1.0');
   process.exit(1);
 }
 
 const env = { ...buildEnv({ requireSigning: true }), TELEMEDIA_VERSION: version };
+delete env.TELEMEDIA_DEV_TOKEN; // no developer access in releases
 const run = (cmd, opts = {}) => {
   console.log(`\n> ${cmd}`);
   execSync(cmd, { stdio: 'inherit', ...opts });
 };
 
-run(`node "${join(here, 'bundle-node.mjs')}"`);
+run(`node "${join(here, 'bundle-node.mjs')}"`, { env });
 const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 run(`"${gradlew}" assembleRelease --console=plain -q`, { cwd: root, env });
 

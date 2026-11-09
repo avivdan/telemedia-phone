@@ -27,14 +27,17 @@ const freePort = () =>
     });
   });
 
-// GET → { status, body, headers }, optionally from a given local address.
+// GET → { status, body, headers, complete }, optionally from a given local address.
 const get = (host, path, headers = {}) =>
   new Promise((resolve, reject) => {
     http
       .get({ host, port, path, headers }, (res) => {
         let body = '';
         res.on('data', (c) => (body += c));
-        res.on('end', () => resolve({ status: res.statusCode, body, headers: res.headers }));
+        const done = () => resolve({ status: res.statusCode, body, headers: res.headers, complete: res.complete });
+        res.on('end', done);
+        res.on('aborted', done);
+        res.on('error', done);
       })
       .on('error', reject);
   });
@@ -55,6 +58,12 @@ before(async () => {
       if (req.url.startsWith('/stream/-100123/45')) {
         res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Range': 'bytes 0-3/10' });
         return res.end('abcd');
+      }
+      // A Telegram error mid-file: fewer bytes than promised, then the connection drops.
+      if (req.url.startsWith('/stream/-100123/99')) {
+        res.writeHead(206, { 'Content-Type': 'video/x-matroska', 'Content-Length': '100', 'Content-Range': 'bytes 0-99/100' });
+        res.write('0123456789');
+        return setTimeout(() => req.socket.destroy(), 50);
       }
       res.writeHead(404);
       res.end();
@@ -100,6 +109,30 @@ test('with the key: own manifest id, stream URLs on the keyed address', async ()
   const v = await get('127.0.0.1', `/${KEY}/stream/-100123/45/a.mkv`, { Host: host });
   assert.equal(v.body, 'abcd');
   assert.equal(gateway.activeStreams(), 0);
+});
+
+test('with the key: video answers carry CORS (web-based Stremio apps)', async () => {
+  const v = await get('127.0.0.1', `/${KEY}/stream/-100123/45/a.mkv`, { Host: `192.168.1.20:${port}`, Origin: 'https://relvhgchz5.strem.io' });
+  assert.equal(v.status, 206);
+  assert.equal(v.headers['access-control-allow-origin'], '*');
+  assert.match(v.headers['access-control-expose-headers'], /Content-Range/);
+});
+
+test('a video cut off upstream is cut off for the player too (no hanging)', async () => {
+  const started = Date.now();
+  const v = await get('127.0.0.1', `/${KEY}/stream/-100123/99/a.mkv`, { Host: `192.168.1.20:${port}` });
+  assert.equal(v.complete, false);
+  assert.ok(Date.now() - started < 10_000);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(gateway.activeStreams(), 0);
+});
+
+test('keyless 127.0.0.1: web pages and other host names refused, Stremio web allowed', async () => {
+  assert.equal((await get('127.0.0.1', '/manifest.json', { Origin: 'https://evil.example' })).status, 403);
+  assert.equal((await get('127.0.0.1', '/manifest.json', { Host: `evil.example:${port}` })).status, 404);
+  assert.equal((await get('127.0.0.1', '/manifest.json', { Origin: 'https://web.stremio.com' })).status, 200);
+  assert.equal((await get('127.0.0.1', '/manifest.json', { Origin: 'https://relvhgchz5.strem.io' })).status, 200);
+  assert.equal((await get('127.0.0.1', '/manifest.json', { Origin: 'https://strem.io.evil.example' })).status, 403);
 });
 
 test('the phone asking itself on the keyed address gets no duplicates', async () => {

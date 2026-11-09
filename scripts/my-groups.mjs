@@ -8,6 +8,18 @@
 // Only public chats (t.me link) or invite links can be suggested to others.
 
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The control server only answers the app, or developer builds' tools with
+// the token `npm run deploy` baked in (and saved here).
+const tokenFile = join(dirname(fileURLToPath(import.meta.url)), '..', 'node-staging', 'dev-token');
+if (!existsSync(tokenFile)) {
+  console.error('No developer token: install a developer build first (npm run deploy).');
+  process.exit(1);
+}
+const token = readFileSync(tokenFile, 'utf8').trim();
 
 const args = process.argv.slice(2);
 const invites = args.includes('--invites');
@@ -16,11 +28,23 @@ const adb = (cmd) => execSync(`adb ${serial ? `-s ${serial} ` : ''}${cmd}`, { en
 const LOCAL = 17001;
 
 adb(`forward tcp:${LOCAL} tcp:7001`);
+const unforward = () => {
+  try {
+    adb(`forward --remove tcp:${LOCAL}`);
+  } catch {
+    // already gone
+  }
+};
+for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => { unforward(); process.exit(130); });
 try {
   console.log(invites
     ? 'Looking for invite links of your private chats (a minute or two)...'
     : 'Asking the phone (can take a minute: it counts videos per public chat)...');
-  const res = await fetch(`http://127.0.0.1:${LOCAL}/${invites ? 'chats/invites' : 'chats'}`, { method: 'POST', body: '{}' });
+  const res = await fetch(`http://127.0.0.1:${LOCAL}/${invites ? 'chats/invites' : 'chats'}`, {
+    method: 'POST',
+    body: '{}',
+    headers: { 'Content-Type': 'application/json', 'X-Telemedia-Token': token },
+  });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
 
@@ -48,5 +72,5 @@ try {
     for (const c of priv) console.log(`  ${c.title}${c.channel ? '  (channel)' : ''}`);
   }
 } finally {
-  adb(`forward --remove tcp:${LOCAL}`);
+  unforward();
 }

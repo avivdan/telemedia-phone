@@ -9,9 +9,15 @@
 // login, please go to Settings > Devices > Scan QR"; tested on Telegram for
 // Android, Nov 2026).
 //
-// createLogin(...).done resolves with the logged-in TelegramClient.
+// createLogin(...).done resolves with the logged-in TelegramClient, or
+// rejects with a KeyRejectedError when Telegram refuses the api key itself
+// (nothing the user can type fixes that: the caller falls back to another key).
 
 'use strict';
+
+class KeyRejectedError extends Error {}
+
+const KEY_REJECTED = /API_ID_INVALID|API_ID_PUBLISHED_FLOOD/;
 
 function errorText(err) {
   return String(err && (err.errorMessage || err.message) ? err.errorMessage || err.message : err);
@@ -29,8 +35,15 @@ function friendlyError(err) {
   if (/PHONE_NUMBER_BANNED/.test(text)) return 'Telegram has banned this phone number.';
   if (/PHONE_CODE_INVALID|PHONE_CODE_EMPTY/.test(text)) return 'Wrong code. Check the code in the Telegram app and type it again.';
   if (/PHONE_CODE_EXPIRED/.test(text)) return 'The code expired. Tap "Send code" to get a new one.';
-  if (/API_ID_INVALID/.test(text)) return 'Telegram rejected this app\'s API key.';
+  if (KEY_REJECTED.test(text)) return 'Telegram rejected this app\'s API key.';
+  if (/NO_CONNECTION/.test(text)) return 'No connection to Telegram. Check the internet and try again.';
   return text;
+}
+
+// gramjs's connect() resolves false (it doesn't throw) when Telegram can't be
+// reached; everything after it would then hang.
+async function connectOrThrow(client) {
+  if ((await client.connect()) === false) throw new Error('NO_CONNECTION');
 }
 
 // onStatus(view): view = { step: 'phone'|'code', codeVia?: 'app'|'sms', error? }
@@ -41,10 +54,15 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   apiId = Number(apiId);
   const creds = { apiId, apiHash };
 
-  let attempt = null; // { client, phone, codeHash, cancelled }: the latest "Send code"
+  let attempt = null; // { client, phone, codeHash, cancelled }: the latest working "Send code"
   let finished = false;
   let resolveDone;
-  const done = new Promise((r) => { resolveDone = r; });
+  let rejectDone;
+  const done = new Promise((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+  done.catch(() => {}); // handled by the caller; no unhandled-rejection noise
   let view = { step: 'phone' };
   const show = (patch) => {
     view = { ...view, ...patch };
@@ -65,16 +83,28 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
     resolveDone(a.client);
   }
 
+  // Telegram refuses the api key: this login can't work, whatever is typed.
+  function keyRejected(err) {
+    if (finished) return;
+    finished = true;
+    const a = attempt;
+    attempt = null;
+    if (a) drop(a);
+    rejectDone(new KeyRejectedError(errorText(err)));
+  }
+
   function fail(a, err) {
     if (a.cancelled || finished) return;
     console.log(`[login] login failed: ${errorText(err)}`);
+    if (KEY_REJECTED.test(errorText(err))) return keyRejected(err);
     show({ error: friendlyError(err) });
   }
 
   // Two-step verification. A wrong password asks again; anything else ends
-  // this attempt (the user can send a new code).
+  // this attempt (the user can send a new code) with the real reason shown.
   async function withPassword(a) {
     let wrong = false;
+    a.lastError = null;
     await a.client.signInWithPassword(creds, {
       password: (hint) => askPassword(hint, wrong),
       onError: async (err) => {
@@ -82,27 +112,36 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
           wrong = true;
           return a.cancelled;
         }
+        a.lastError = err;
+        console.log('[login] password step: ' + errorText(err));
         return true;
       },
     });
   }
 
   // A new attempt each time: "Send code" again also fixes a mistyped number.
+  // The previous attempt stays usable until the new code has really been sent.
   async function submitPhone(phone) {
     if (finished) throw new Error('Already logged in.');
-    await drop(attempt);
+    const prev = attempt;
     const a = { cancelled: false };
     attempt = a;
     try {
       a.client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 5 });
-      await a.client.connect();
+      await connectOrThrow(a.client);
       const sent = await a.client.sendCode(creds, phone);
       if (a.cancelled) return;
       a.phone = phone;
       a.codeHash = sent.phoneCodeHash;
+      if (prev) await drop(prev);
       show({ step: 'code', codeVia: sent.isCodeViaApp ? 'app' : 'sms', error: null });
     } catch (err) {
       await drop(a);
+      if (prev && !prev.cancelled) attempt = prev;
+      if (KEY_REJECTED.test(errorText(err))) {
+        keyRejected(err);
+        throw new Error(friendlyError(err));
+      }
       throw new Error(friendlyError(err));
     }
   }
@@ -124,7 +163,7 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
       succeed(a);
     } catch (err) {
       if (errorText(err) !== 'SESSION_PASSWORD_NEEDED') throw new Error(friendlyError(err));
-      withPassword(a).then(() => succeed(a), (e) => fail(a, e));
+      withPassword(a).then(() => succeed(a), (e) => fail(a, a.lastError || e));
     }
   }
 
@@ -138,4 +177,4 @@ function createLogin({ apiId, apiHash, onStatus, askPassword }) {
   return { done, submitPhone, submitCode, reset };
 }
 
-module.exports = { createLogin, friendlyError };
+module.exports = { createLogin, friendlyError, connectOrThrow, KeyRejectedError, KEY_REJECTED };

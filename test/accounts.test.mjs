@@ -76,6 +76,12 @@ test('our entry twice (older bug): one kept, the copy dropped', () => {
   assert.deepEqual(next.map((a) => a.manifest.id), [MY_ID, 'com.linvo.cinemeta']);
 });
 
+test('automatic update with our entry gone (removed in Stremio): nothing re-added', () => {
+  const url = `https://192-168-0-7.local-ip.sh:7443/${KEY}/manifest.json`;
+  const list = [cinemeta, local, friendsPhone];
+  assert.equal(mergeEntries(list, [mine(url)], ours(null), true), list);
+});
+
 test('same address again: nothing to write', () => {
   const url = `https://192-168-1-20.local-ip.sh:7443/${KEY}/manifest.json`;
   const list = [cinemeta, mine(url)];

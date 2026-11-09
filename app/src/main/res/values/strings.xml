@@ -7,6 +7,7 @@
     <string name="starting">Starting…</string>
     <string name="logging_in">Logging in…</string>
     <string name="starting_addon">Starting Telemedia…</string>
+    <string name="waiting_network">Waiting for an internet connection to Telegram…</string>
 
     <!-- Step 1: Telegram -->
     <string name="login_title">1 · Log in to Telegram</string>
@@ -78,6 +79,8 @@
     <string name="lan_remove_confirm">Remove Telemedia from %1$s? The phone gets a new key, so TVs on that account can\'t use it anymore. Your other connected accounts are updated by themselves.</string>
     <string name="lan_removed">Removed ✔ The old address no longer works.</string>
     <string name="lan_connected">Connected to %1$s ✔ Stremio on that TV now lists Telemedia. Keep the phone on this Wi-Fi (and charging) while you watch.</string>
+    <string name="lan_tls_waiting">Smart-TV Stremio apps (Hisense VIDAA, LG, Samsung) need the secure (https) address, and it isn\'t ready yet. Telemedia keeps trying. Android TV and computers work now.</string>
+    <string name="lan_tls_blocked">This network\'s router blocks the secure (https) address (DNS protection), so smart-TV Stremio apps (VIDAA, LG, Samsung) can\'t use it here. Android TV and computers work.</string>
     <string name="lan_no_wifi">Connect the phone to Wi-Fi to use Telemedia on a TV.</string>
     <string name="lan_reconnect">That account\'s Stremio session ended: tap Connect a TV and log in to it again, or Remove it.</string>
 

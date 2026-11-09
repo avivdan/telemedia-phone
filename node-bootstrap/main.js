@@ -30,7 +30,7 @@ const path = require('path');
 const stremioLink = require('./tv/stremio-link');
 const myTelegram = require('./tv/my-telegram');
 const { unscramble } = require('./tv/starter-login');
-const { createLogin } = require('./login');
+const { createLogin, connectOrThrow, KeyRejectedError, KEY_REJECTED } = require('./login');
 const { fetchOwnKeys } = require('./setup');
 const groups = require('./groups');
 const lan = require('./lan');
@@ -43,6 +43,9 @@ const ADDON_INTERNAL_PORT = 7010; // the addon itself, 127.0.0.1 only
 const MAX_BODY = 8192;
 const STREMIO_PAIRING_MS = 20 * 60 * 1000; // stop polling Stremio after this
 const cfgPath = process.argv[2];
+// The app's secret for the control server, new for every start (NodeService
+// passes it; only the app, which can read its own files, knows it).
+const CONTROL_TOKEN = process.argv[3] || '';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const messageOf = (err) => String(err && err.message ? err.message : err);
@@ -215,12 +218,29 @@ const actions = {
   },
 };
 
+// Who may use the control server: the app (CONTROL_TOKEN), or a developer
+// build's tools over adb (defaults.json devToken, only in `npm run deploy`
+// builds). Never browser pages (they send an Origin) or other host names
+// (DNS rebinding).
+function controlAllowed(req) {
+  if (req.headers.origin) return false;
+  const hostName = String(req.headers.host || '').replace(/:\d+$/, '');
+  if (hostName !== '127.0.0.1' && hostName !== 'localhost') return false;
+  const given = String(req.headers['x-telemedia-token'] || '');
+  const ok = (secret) => {
+    if (!secret || given.length !== secret.length) return false;
+    return require('crypto').timingSafeEqual(Buffer.from(given), Buffer.from(secret));
+  };
+  return ok(CONTROL_TOKEN) || ok(readDefaults().devToken);
+}
+
 function startControlServer() {
   const server = http.createServer((req, res) => {
     const send = (code, body) => {
       res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(body));
     };
+    if (!controlAllowed(req)) return send(403, { error: 'forbidden' });
     if (req.method === 'GET' && req.url === '/status') {
       return send(200, {
         ...status,
@@ -279,11 +299,14 @@ async function interactiveLogin(apiId, apiHash) {
       setStatus({ state: 'need_login', login: view });
     },
   });
-  const client = await login.done;
-  done = true;
-  login = null;
-  setStatus({ state: 'logging_in' });
-  return client;
+  try {
+    const client = await login.done;
+    setStatus({ state: 'logging_in' });
+    return client;
+  } finally {
+    done = true;
+    login = null;
+  }
 }
 
 // First-run setup by hand (no starter key, or the automatic way failed):
@@ -330,7 +353,7 @@ function configForm(failure) {
 
 // A saved session can be revoked (logged out from another device, expired).
 // Detect that up front so we ask to log in again instead of crash-looping.
-const DEAD_SESSION = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/;
+const DEAD_SESSION = /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|AUTH_KEY_DUPLICATED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED/;
 
 async function sessionIsValid(cfg) {
   const { TelegramClient } = require('telegram');
@@ -339,11 +362,13 @@ async function sessionIsValid(cfg) {
     connectionRetries: 5,
   });
   try {
-    await client.connect();
+    await connectOrThrow(client);
     await client.getMe();
     return true;
   } catch (err) {
-    if (DEAD_SESSION.test(String(err && (err.errorMessage || err.message)))) return false;
+    const text = String(err && (err.errorMessage || err.message));
+    if (DEAD_SESSION.test(text)) return false;
+    if (KEY_REJECTED.test(text)) throw new KeyRejectedError(text);
     throw err;
   } finally {
     await client.destroy().catch(() => {});
@@ -425,7 +450,13 @@ const LAN_RETRY_MS = 2 * 60_000;
 const CERT_CHECK_MS = 6 * 60 * 60_000;
 let gateway = null;
 let certStore = null;
-let lanStatus = { ip: null, url: null, secure: false, pairing: { state: 'idle' }, accounts: [] };
+let lanStatus = { ip: null, url: null, secure: false, pairing: { state: 'idle' }, accounts: [], tls: { state: 'waiting' } };
+let certRetryMs = 30_000; // while there is no certificate: 30 s, doubling up to 1 h
+let certRetryTimer = null;
+// The https name (192-168-0-104.local-ip.sh) must resolve to the phone; some
+// routers refuse such answers (DNS-rebinding protection). Checked per address.
+const tlsNameCheck = { ip: null, ok: true, at: 0 };
+let ipSource = 'interfaces';
 let lanPairing = null; // the newest link login; older ones stop
 const retryAt = new Map(); // link id → next try after a failed update
 let lastLocalStremio = 0; // last Stremio request on 127.0.0.1
@@ -473,9 +504,26 @@ const lanEntryTag = () => `${lanAddonId()}|${lanAddonName()}`;
 // web-based ones on smart TVs; plain http only in the native apps.
 function lanUrl(ip) {
   if (!ip) return null;
-  return gateway && gateway.tlsActive()
+  const nameOk = tlsNameCheck.ip !== ip || tlsNameCheck.ok;
+  return gateway && gateway.tlsActive() && nameOk
     ? `https://${lan.tlsHostname(ip)}:${TLS_PORT}/${lanKey()}/manifest.json`
     : `http://${ip}:${PUBLIC_PORT}/${lanKey()}/manifest.json`;
+}
+
+// Does 192-168-x-y.local-ip.sh resolve to this phone on this network?
+// (Only what the phone sees: a TV with other DNS may still differ.)
+async function checkTlsName(ip) {
+  if (!ip || (tlsNameCheck.ip === ip && Date.now() - tlsNameCheck.at < 10 * 60_000)) return;
+  let ok = false;
+  try {
+    const { address } = await require('dns').promises.lookup(lan.tlsHostname(ip), { family: 4 });
+    ok = address === ip;
+  } catch {
+    ok = false;
+  }
+  if (tlsNameCheck.ip === ip && tlsNameCheck.ok !== ok) console.log('[lan] https name ' + (ok ? 'resolves again' : 'no longer resolves'));
+  else if (!ok) console.log('[lan] the https name does not resolve on this network (router DNS protection?): using http');
+  Object.assign(tlsNameCheck, { ip, ok, at: Date.now() });
 }
 
 async function addonManifest() {
@@ -562,7 +610,9 @@ async function fillUserNames() {
 }
 
 // Writes the current address into one account. → true when it's up to date.
-async function updateLink(link, url, manifest) {
+// → 'ok' | 'missing' (automatic update, but the user removed the entry in
+// Stremio: leave it removed) | 'failed'.
+async function updateLink(link, url, manifest, { automatic = false } = {}) {
   try {
     const key = lanKey();
     const result = await stremioAccount.putAddons(link.authKey, [{ transportUrl: url, manifest }], {
@@ -571,42 +621,64 @@ async function updateLink(link, url, manifest) {
       replaces: (a) => !!a.manifest && (a.manifest.id === lanAddonId()
         || (a.manifest.id === 'community.telemedia.lan'
           && (a.transportUrl === link.url || String(a.transportUrl).includes(`/${key}/`)))),
+      onlyReplace: automatic,
     });
     console.log(`[lan] Stremio account ${link.id}: ${result}`);
+    if (result === 'missing') return 'missing';
     link.url = url;
     link.tag = lanEntryTag();
     link.broken = false;
     retryAt.delete(link.id);
-    return true;
+    return 'ok';
   } catch (err) {
     console.log(`[lan] could not update Stremio account ${link.id}: ${messageOf(err)}`);
     if (stremioAccount.isAuthError(err)) link.broken = true;
     retryAt.set(link.id, Date.now() + LAN_RETRY_MS);
-    return false;
+    return 'failed';
   }
 }
 
 // Brings every connected account to the current address (after a Wi-Fi
 // change, http → https, or a new key).
+// Automatic: never adds an entry the user removed in Stremio (that account is
+// then forgotten), never swaps an https address for http (smart-TV apps
+// would lose it; a "Connect a TV" tap still writes whatever is current), and
+// never writes a guessed address.
 function refreshLinks() {
   return serialized(async () => {
     const url = lanStatus.url;
-    if (!url) return;
-    const links = readLinks();
+    if (!url || ipSource !== 'interfaces') return;
+    let links = readLinks();
     const tag = lanEntryTag();
-    const stale = links.filter((l) => !l.broken && (l.url !== url || l.tag !== tag) && (retryAt.get(l.id) || 0) < Date.now());
+    const stale = links.filter((l) => !l.broken && (l.url !== url || l.tag !== tag)
+      && !(l.url && l.url.startsWith('https:') && url.startsWith('http:'))
+      && (retryAt.get(l.id) || 0) < Date.now());
     if (!stale.length) return;
     const manifest = myLanManifest(await addonManifest());
-    for (const l of stale) await updateLink(l, url, manifest);
+    const gone = [];
+    for (const l of stale) {
+      if ((await updateLink(l, url, manifest, { automatic: true })) === 'missing') gone.push(l);
+    }
+    for (const l of gone) {
+      console.log(`[lan] account ${l.id}: removed in Stremio, forgetting it`);
+      stremioAccount.logout(l.authKey).catch(() => {});
+    }
+    links = links.filter((l) => !gone.includes(l));
     saveLinks(links);
   });
 }
 
 async function checkLan() {
-  const ip = await lan.lanAddress().catch(() => null);
-  if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? 'is now ' + ip : 'gone'));
+  const found = await lan.lanAddress().catch(() => ({ ip: null, source: 'interfaces' }));
+  const ip = found.ip;
+  if (ip !== lanStatus.ip) console.log('[lan] Wi-Fi address ' + (ip ? `is now ${ip} (${found.source})` : 'gone'));
+  ipSource = found.source;
+  if (gateway && gateway.tlsActive()) await checkTlsName(ip);
   const url = lanUrl(ip);
-  lanStatus = { ...lanStatus, ip, url, secure: !!url && url.startsWith('https:') };
+  const tls = gateway && gateway.tlsActive()
+    ? (tlsNameCheck.ip === ip && !tlsNameCheck.ok ? { state: 'blocked' } : { state: 'ready' })
+    : { state: 'waiting', error: lanStatus.tls && lanStatus.tls.error };
+  lanStatus = { ...lanStatus, ip, url, secure: !!url && url.startsWith('https:'), tls };
   publishAccounts();
   await refreshLinks();
   publishAccounts();
@@ -667,16 +739,24 @@ async function rememberOwnerName() {
 // The HTTPS certificate from local-ip.sh (lan.js); without it, other
 // devices get the plain http address.
 function refreshCert() {
+  clearTimeout(certRetryTimer);
   certStore
     .refresh()
     .then((changed) => {
+      certRetryMs = 30_000;
       if (!changed && gateway.tlsActive()) return;
       gateway.setTls(certStore.get());
       console.log('[lan] https certificate ' + (changed ? 'updated' : 'loaded'));
       // Advertise the https address (and update the accounts) once listening.
       setTimeout(() => checkLan().catch(() => {}), 1500);
     })
-    .catch((err) => console.log('[lan] no https certificate yet: ' + messageOf(err)));
+    .catch((err) => {
+      console.log('[lan] no https certificate yet: ' + messageOf(err));
+      if (gateway.tlsActive()) return; // the current one still works; the 6-hour check retries
+      lanStatus = { ...lanStatus, tls: { state: 'waiting', error: messageOf(err) } };
+      certRetryTimer = setTimeout(refreshCert, certRetryMs);
+      certRetryMs = Math.min(certRetryMs * 2, 60 * 60_000);
+    });
 }
 
 // "Connect a TV": a link.stremio.com link. The TV's owner confirms it, on
@@ -709,8 +789,8 @@ async function lanPairingLink() {
       const link = same || { id: newLinkId() };
       const oldKey = same && same.authKey;
       Object.assign(link, { authKey, userId: user.id || null, user: maskEmail(user.email), url: null, broken: false });
-      const ok = await updateLink(link, lanStatus.url, myLanManifest(await addonManifest()));
-      if (!ok) {
+      const result = await updateLink(link, lanStatus.url, myLanManifest(await addonManifest()));
+      if (result !== 'ok') {
         stremioAccount.logout(authKey).catch(() => {});
         lanStatus = { ...lanStatus, pairing: { state: 'error', error: 'Stremio did not accept the change. Try again.' } };
         return;
@@ -857,54 +937,91 @@ async function joinGroups(links) {
 }
 
 // ---------------------------------------------------------------------------
+// No connection to Telegram (gramjs connect() gave up): wait and try again,
+// with the reason on screen, instead of hanging on "Logging in…".
+async function untilOnline(fn) {
+  let delay = 5000;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!/NO_CONNECTION|ETIMEDOUT|ECONNREFUSED|ENETUNREACH|EAI_AGAIN|ENOTFOUND/.test(messageOf(err))) throw err;
+      setStatus({ state: 'waiting_network' });
+      console.log(`[bootstrap] no connection to Telegram, trying again in ${delay / 1000} s`);
+      await sleep(delay);
+      delay = Math.min(delay * 2, 60_000);
+    }
+  }
+}
+
+const keyProblem = (err) =>
+  'Telegram rejected the api_id / api_hash (' + messageOf(err) + '). Get your own on my.telegram.org below.';
+
 async function main() {
   startControlServer();
   const cfg = readConfig();
   let setupFailure = null;
-
   const starter = unscramble(readDefaults().starter);
-  if ((!cfg.apiId || !cfg.apiHash) && starter) {
-    try {
-      const starterClient = await interactiveLogin(starter.apiId, starter.apiHash);
-      setStatus({ state: 'auto_setup', setupStep: 'code' });
-      const keys = await fetchOwnKeys({
-        starterClient,
-        starter,
-        askPassword,
-        password: () => lastPassword,
-        onStep: (setupStep) => setStatus({ state: 'auto_setup', setupStep }),
-      });
-      patchConfig({ apiId: keys.apiId, apiHash: keys.apiHash, session: keys.session });
-      console.log('[bootstrap] own API keys saved' + (keys.session ? ' with session' : ''));
+
+  for (;;) {
+    // 1. Own key, the automatic way (once: it asks my.telegram.org for a code).
+    if ((!cfg.apiId || !cfg.apiHash) && starter && !setupFailure) {
+      try {
+        const starterClient = await interactiveLogin(starter.apiId, starter.apiHash);
+        setStatus({ state: 'auto_setup', setupStep: 'code' });
+        const keys = await fetchOwnKeys({
+          starterClient,
+          starter,
+          askPassword,
+          password: () => lastPassword,
+          onStep: (setupStep) => setStatus({ state: 'auto_setup', setupStep }),
+        });
+        // Read from the account's own my.telegram.org page: valid as they are.
+        patchConfig({ apiId: keys.apiId, apiHash: keys.apiHash, session: keys.session });
+        console.log('[bootstrap] own API keys saved' + (keys.session ? ' with session' : ''));
+        Object.assign(cfg, keys);
+      } catch (err) {
+        console.log('[bootstrap] automatic setup failed: ' + messageOf(err));
+        setupFailure = err instanceof KeyRejectedError
+          ? 'The built-in setup key no longer works. Get your own key below.'
+          : messageOf(err);
+      }
+    }
+
+    // 2. By hand. Kept in memory: saved only once a login with them works.
+    if (!cfg.apiId || !cfg.apiHash) {
+      const keys = await configForm(setupFailure);
       Object.assign(cfg, keys);
-    } catch (err) {
-      console.log('[bootstrap] automatic setup failed: ' + messageOf(err));
-      setupFailure = messageOf(err);
-    }
-  }
-
-  if (!cfg.apiId || !cfg.apiHash) {
-    const keys = await configForm(setupFailure);
-    patchConfig({ ...keys, session: undefined }); // a session belongs to the api id that made it
-    console.log('[bootstrap] API keys saved from the setup form');
-    Object.assign(cfg, keys);
-    delete cfg.session;
-  }
-
-  if (cfg.session) {
-    setStatus({ state: 'logging_in' });
-    if (!(await sessionIsValid(cfg))) {
-      console.log('[bootstrap] saved session is no longer valid, logging in again');
       delete cfg.session;
-      patchConfig({ session: undefined });
     }
-  }
 
-  if (!cfg.session) {
-    const client = await interactiveLogin(cfg.apiId, cfg.apiHash);
-    cfg.session = client.session.save();
-    await client.destroy().catch(() => {}); // the addon opens its own connection
-    patchConfig({ session: cfg.session });
+    try {
+      // 3. A saved session: still valid?
+      if (cfg.session) {
+        setStatus({ state: 'logging_in' });
+        if (!(await untilOnline(() => sessionIsValid(cfg)))) {
+          console.log('[bootstrap] saved session is no longer valid, logging in again');
+          delete cfg.session;
+          patchConfig({ session: undefined });
+        }
+      }
+      // 4. Log in with the own key.
+      if (!cfg.session) {
+        const client = await interactiveLogin(cfg.apiId, cfg.apiHash);
+        cfg.session = client.session.save();
+        await client.destroy().catch(() => {}); // the addon opens its own connection
+      }
+    } catch (err) {
+      if (!(err instanceof KeyRejectedError)) throw err;
+      console.log('[bootstrap] own API key rejected: ' + messageOf(err));
+      setupFailure = keyProblem(err);
+      for (const k of ['apiId', 'apiHash', 'session']) delete cfg[k];
+      patchConfig({ apiId: undefined, apiHash: undefined, session: undefined });
+      continue;
+    }
+
+    patchConfig({ apiId: cfg.apiId, apiHash: cfg.apiHash, session: cfg.session });
+    break;
   }
 
   startAddon(cfg);

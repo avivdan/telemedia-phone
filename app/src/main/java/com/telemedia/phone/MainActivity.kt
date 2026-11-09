@@ -121,11 +121,13 @@ class MainActivity : Activity() {
     private var restartingUntil = 0L
     // Errors from the last action, shown until the next action on that card.
     private val actionErrors = mutableMapOf<TextView, String>()
+    // Buttons whose request is still running: the poll must not re-enable them.
+    private val inFlight = mutableSetOf<Button>()
 
     private val poll = object : Runnable {
         override fun run() {
             Thread {
-                val s = ControlClient.status()
+                val s = ControlClient.status(applicationContext)
                 runOnUiThread { if (!isFinishing) render(s) }
             }.start()
             handler.postDelayed(this, 1000)
@@ -143,6 +145,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // Also cancels a pending restart delay if Android killed the service.
+        if (!AppConfig.isStopped(this)) NodeService.start(this)
         handler.post(poll)
     }
 
@@ -337,6 +341,7 @@ class MainActivity : Activity() {
             "offline", "starting" -> getString(R.string.starting)
             "logging_in" -> getString(R.string.logging_in)
             "starting_addon" -> getString(R.string.starting_addon)
+            "waiting_network" -> getString(R.string.waiting_network)
             "need_login" -> {
                 visible = setOf(loginCard)
                 renderLogin(s!!.optJSONObject("login") ?: JSONObject())
@@ -366,8 +371,10 @@ class MainActivity : Activity() {
         for (card in cards) card.visibility = if (card in visible) View.VISIBLE else View.GONE
         status.text = text ?: ""
         status.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        footer.visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
-        logout.visibility = if (state == "running") View.VISIBLE else View.GONE
+        // Restart is always there (it fixes most hiccups), except when stopped.
+        footer.visibility = if (state == "stopped") View.GONE else View.VISIBLE
+        logout.visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
+        findViewById<Button>(R.id.stop).visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
     }
 
     private fun renderLogin(view: JSONObject) {
@@ -434,8 +441,8 @@ class MainActivity : Activity() {
         val state = groups.optStr("state")
         val items = groups.optJSONArray("items") ?: JSONArray()
         val results = groups.optJSONObject("results") ?: JSONObject()
-        groupsJoin.isEnabled = state == "offer"
-        groupsJoin.setText(if (state == "joining") R.string.groups_joining else R.string.groups_join)
+        groupsJoin.isEnabled = state == "offer" && groupsJoin !in inFlight
+        if (groupsJoin !in inFlight) groupsJoin.setText(if (state == "joining") R.string.groups_joining else R.string.groups_join)
         groupsSkip.visibility = if (state == "offer") View.VISIBLE else View.GONE
         setError(groupsError, groups.optStr("error"))
 
@@ -522,7 +529,7 @@ class MainActivity : Activity() {
         lanQrCaption.setText(if (link.isNotEmpty()) R.string.lan_scan_caption else R.string.lan_address_caption)
         lanUrl.text = qr
         val onWifi = url.isNotEmpty()
-        lanAdd.isEnabled = onWifi && state != "installing"
+        lanAdd.isEnabled = onWifi && state != "installing" && lanAdd !in inFlight
         val accounts = lan.optJSONArray("accounts") ?: JSONArray()
         val note = when {
             !onWifi -> getString(R.string.lan_no_wifi)
@@ -530,6 +537,8 @@ class MainActivity : Activity() {
             state == "waiting" && lanOpened -> getString(R.string.stremio_waiting)
             state == "done" -> getString(R.string.lan_connected, pairing.optStr("user").ifEmpty { "the account" })
             (0 until accounts.length()).any { accounts.getJSONObject(it).optBoolean("broken") } -> getString(R.string.lan_reconnect)
+            !lan.optBoolean("secure") && lan.optJSONObject("tls")?.optStr("state") == "blocked" -> getString(R.string.lan_tls_blocked)
+            !lan.optBoolean("secure") -> getString(R.string.lan_tls_waiting)
             else -> ""
         }
         lanNote.text = note
@@ -606,7 +615,7 @@ class MainActivity : Activity() {
         }
         stremioNote.text = note
         stremioNote.visibility = if (note.isEmpty()) View.GONE else View.VISIBLE
-        stremioAdd.setText(if (added) R.string.stremio_add_again else R.string.stremio_add)
+        if (stremioAdd !in inFlight) stremioAdd.setText(if (added) R.string.stremio_add_again else R.string.stremio_add)
         stremioOpen.visibility = if (added && installed) View.VISIBLE else View.GONE
         stremioGet.visibility = if (!installed) View.VISIBLE else View.GONE
         setError(stremioError, "")
@@ -625,12 +634,15 @@ class MainActivity : Activity() {
         onOk: (JSONObject) -> Unit = {},
     ) {
         error?.let { actionErrors.remove(it); it.visibility = View.GONE }
+        if (button != null && button in inFlight) return
         val label = button?.text
+        button?.let { inFlight += it }
         button?.isEnabled = false
         button?.setText(R.string.please_wait)
         Thread {
-            val reply = ControlClient.post(path, body.toString())
+            val reply = ControlClient.post(applicationContext, path, body.toString())
             runOnUiThread {
+                button?.let { inFlight -= it }
                 button?.isEnabled = true
                 button?.text = label
                 if (reply.ok) onOk(reply.body) else error?.let { showError(it, reply.error) }

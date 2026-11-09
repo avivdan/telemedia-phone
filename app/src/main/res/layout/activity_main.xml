@@ -39,6 +39,36 @@
             android:textColor="@color/fg"
             android:textSize="17sp" />
 
+        <!-- Who is logged in, with Log out right there (easy to find) -->
+        <LinearLayout
+            android:id="@+id/account_row"
+            style="@style/Telemedia.Card"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
+
+            <TextView
+                android:id="@+id/account_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:paddingEnd="12dp"
+                android:textColor="@color/fg"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/account_logout"
+                style="@style/Telemedia.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_marginTop="0dp"
+                android:minHeight="48dp"
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:text="@string/log_out_short" />
+        </LinearLayout>
+
         <!-- Step 1: Telegram login -->
         <LinearLayout
             android:id="@+id/login_card"
@@ -449,11 +479,6 @@
                 android:id="@+id/restart"
                 style="@style/Telemedia.Button.Secondary"
                 android:text="@string/restart" />
-
-            <Button
-                android:id="@+id/logout"
-                style="@style/Telemedia.Button.Secondary"
-                android:text="@string/logout" />
 
             <Button
                 android:id="@+id/stop"

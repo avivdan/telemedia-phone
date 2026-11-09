@@ -98,6 +98,9 @@
     <string name="stopped_text">Nothing runs in the background.\nStremio on this phone and on your TVs can\'t play from it.\nTap Start Telemedia to turn it back on.</string>
     <string name="start">Start Telemedia</string>
     <string name="logout">Log out of Telegram</string>
+    <string name="log_out_short">Log out</string>
+    <string name="account_logged_in">Logged in to Telegram as %1$s.</string>
+    <string name="account_logged_in_plain">Logged in to Telegram.</string>
     <string name="logout_confirm">Log this phone out of Telegram?\nTelemedia also leaves the Stremio accounts of your TVs.\nSo the next person who logs in doesn\'t get them.</string>
 
     <string name="notification_channel">Telemedia</string>

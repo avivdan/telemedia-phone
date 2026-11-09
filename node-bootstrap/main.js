@@ -285,6 +285,7 @@ function startControlServer() {
         stremioAdded,
         groups: groupsStatus,
         groupsCount: groupList().length,
+        ownerName: readConfig().ownerName || null,
         lan: status.state === 'running' ? lanStatus : null,
         activeStreams: gateway ? gateway.activeStreams() : 0,
       });

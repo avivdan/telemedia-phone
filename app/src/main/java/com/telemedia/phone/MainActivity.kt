@@ -110,7 +110,9 @@ class MainActivity : Activity() {
     private lateinit var batteryCard: View
     private lateinit var stoppedCard: View
     private lateinit var footer: View
-    private lateinit var logout: Button
+    private lateinit var accountRow: View
+    private lateinit var accountText: TextView
+    private lateinit var accountLogout: Button
 
     private var stremioOpened = false
     private var lanOpened = false
@@ -215,7 +217,9 @@ class MainActivity : Activity() {
         batteryCard = findViewById(R.id.battery_card)
         stoppedCard = findViewById(R.id.stopped_card)
         footer = findViewById(R.id.footer)
-        logout = findViewById(R.id.logout)
+        accountRow = findViewById(R.id.account_row)
+        accountText = findViewById(R.id.account_text)
+        accountLogout = findViewById(R.id.account_logout)
     }
 
     private fun setUpActions() {
@@ -320,11 +324,11 @@ class MainActivity : Activity() {
             NodeService.start(this)
             render(null)
         }
-        logout.setOnClickListener {
+        accountLogout.setOnClickListener {
             AlertDialog.Builder(this)
                 .setMessage(R.string.logout_confirm)
                 .setPositiveButton(R.string.logout) { _, _ ->
-                    action("/logout", JSONObject(), logout, null) { restartNode() }
+                    action("/logout", JSONObject(), accountLogout, null) { restartNode() }
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
@@ -389,7 +393,14 @@ class MainActivity : Activity() {
         val restartVisible = !silent || System.currentTimeMillis() - silentSince > 30_000
         footer.visibility = if (state == "stopped") View.GONE else View.VISIBLE
         findViewById<Button>(R.id.restart).visibility = if (restartVisible) View.VISIBLE else View.GONE
-        logout.visibility = if (state == "running" || state == "error") View.VISIBLE else View.GONE
+        // Who is logged in, and Log out next to it: at the top, easy to find.
+        val loggedIn = state == "running" || state == "error"
+        accountRow.visibility = if (loggedIn) View.VISIBLE else View.GONE
+        if (loggedIn) {
+            val name = s?.optStr("ownerName").orEmpty()
+            accountText.text = if (name.isNotEmpty()) getString(R.string.account_logged_in, name)
+            else getString(R.string.account_logged_in_plain)
+        }
         findViewById<Button>(R.id.stop).visibility = View.VISIBLE
     }
 

@@ -110,7 +110,8 @@ the phone's Tailscale IP in the address instead.
   completely: nothing runs, TVs can't use the phone. It stays stopped, also
   after a restart of the phone, until you tap **Start Telemedia**.
 - **Restart** in the app fixes most hiccups.
-- **Log out of Telegram** signs the phone out. You can also sign it out from
+- **Log out:** at the top of Telemedia, next to "Logged in to Telegram as
+  *name*". It also takes your TVs out. You can also sign the phone out from
   Telegram: *Settings → Devices*.
 - Updates: install the new APK over the old one. It keeps your login.
 
@@ -175,8 +176,9 @@ happen.
     within about a minute.
 12. **Remove inside Stremio** → remove "Telemedia (*name*'s phone)" in a TV's
     Stremio Add-ons → it stays removed (Telemedia forgets that account).
-13. **Log out of Telegram** → the TVs lose Telemedia too (it leaves their
-    Stremio accounts) → log in again (needs a code; mind item 1).
+13. **Log out** (top of the screen, next to "Logged in to Telegram as …") →
+    the TVs lose Telemedia too (it leaves their Stremio accounts) → log in
+    again (needs a code; mind item 1).
 
 Something wrong with a TV? `adb logcat -s TelemediaNode | grep "\[lan\]"`
 shows each request from other devices (key removed).

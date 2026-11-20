@@ -68,24 +68,24 @@
 
     <!-- Other devices: this phone as a server for any TV -->
     <string name="lan_title">Watch on a TV or computer</string>
-    <string name="lan_intro">A TV or computer on the same Wi-Fi can play from this phone.\nTap Connect a TV.\nLog in to the TV\'s Stremio account and confirm.\nOr the TV\'s owner scans the code with their own phone.\nDone with that TV?\nFind its account at the bottom.\nTap Remove from Stremio account under it.</string>
+    <string name="lan_intro">A TV or computer on the same Wi-Fi can play from this phone.\nTap Connect a user.\nLog in to that user\'s Stremio account and confirm.\nOr the user scans the code with their own phone.\nDone with that user?\nFind their account at the bottom.\nTap Remove from Stremio account under it.</string>
     <string name="lan_qr_description">QR code</string>
-    <string name="lan_add">Connect a TV</string>
+    <string name="lan_add">Connect a user</string>
     <string name="lan_copy">Copy address</string>
     <string name="lan_copied">Address copied</string>
-    <string name="lan_scan_caption">TV owner: scan this with your phone.\nThen confirm in your Stremio account.</string>
-    <string name="lan_address_caption">Or type this address in Stremio on the TV, under Add-ons:</string>
+    <string name="lan_scan_caption">User: scan this with your phone.\nThen confirm in your Stremio account.</string>
+    <string name="lan_address_caption">Or type this address in that user\'s Stremio, under Add-ons:</string>
     <string name="lan_accounts_title">Connected Stremio accounts</string>
     <string name="lan_remove">Remove</string>
     <string name="lan_remove_main">Remove from Stremio account</string>
-    <string name="lan_add_another">Connect another TV</string>
-    <string name="lan_remove_confirm">Remove Telemedia from %1$s?\nThe phone gets a new key.\nTVs on that account can\'t use it anymore.\nYour other TVs get the new key by themselves.</string>
+    <string name="lan_add_another">Connect another user</string>
+    <string name="lan_remove_confirm">Remove Telemedia from %1$s?\nThe phone gets a new key.\nThat user can\'t use it anymore.\nYour other users get the new key by themselves.</string>
     <string name="lan_removed">Removed ✔\nThe old address doesn\'t work anymore.</string>
-    <string name="lan_connected">Connected to %1$s ✔\nStremio on that TV now shows Telemedia.\nKeep the phone on this Wi-Fi while you watch.\nCharging is best.</string>
+    <string name="lan_connected">Connected to %1$s ✔\nThat user\'s Stremio now shows Telemedia.\nKeep the phone on this Wi-Fi while you watch.\nCharging is best.</string>
     <string name="lan_tls_waiting">Smart TVs (Hisense, LG, Samsung) need a secure address.\nIt isn\'t ready yet.\nTelemedia keeps trying.\nAndroid TV and computers work now.</string>
     <string name="lan_tls_blocked">This router blocks the secure address.\nSo smart TVs (Hisense, LG, Samsung) can\'t use it here.\nAndroid TV and computers work.</string>
     <string name="lan_no_wifi">Connect the phone to Wi-Fi to watch on a TV.</string>
-    <string name="lan_reconnect">Stremio disconnected an account marked ⚠.\nTap Connect another TV and log in to it again.\nOr tap Remove from Stremio account under it.</string>
+    <string name="lan_reconnect">Stremio disconnected an account marked ⚠.\nTap Connect another user and log in to it again.\nOr tap Remove from Stremio account under it.</string>
 
     <string name="battery_text">Let Telemedia run in the background.\nThen videos don\'t stop while you watch.</string>
     <string name="battery_allow">Allow</string>
@@ -100,7 +100,7 @@
     <string name="log_out_short">Log out</string>
     <string name="account_logged_in">Logged in to Telegram as %1$s.</string>
     <string name="account_logged_in_plain">Logged in to Telegram.</string>
-    <string name="logout_confirm">Log this phone out of Telegram?\nTelemedia also leaves the Stremio accounts of your TVs.\nSo the next person who logs in doesn\'t get them.</string>
+    <string name="logout_confirm">Log this phone out of Telegram?\nTelemedia also leaves the connected Stremio accounts.\nSo the next person who logs in doesn\'t get them.</string>
 
     <string name="notification_channel">Telemedia</string>
     <string name="notification_title">Telemedia is running</string>

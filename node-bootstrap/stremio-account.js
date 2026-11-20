@@ -1,4 +1,4 @@
-// The Stremio accounts this phone is connected to ("Connect a TV"): adds the
+// The Stremio accounts this phone is connected to ("Connect a user"): adds the
 // phone's LAN entry to an account, keeps it up to date when the phone's
 // address or key changes, and removes it again ("Remove"). Same mechanism as
 // the TV app's stremio-link.js (link.stremio.com login, then read / merge /

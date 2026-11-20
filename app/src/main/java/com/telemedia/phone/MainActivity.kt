@@ -292,7 +292,7 @@ class MainActivity : Activity() {
         openStremio.setOnClickListener { if (!Stremio.open(this)) Stremio.openStoreListing(this) }
 
         // Other devices: the main button connects a TV's Stremio account (link
-        // login), "Connect a TV" and then "Connect another TV". Removing is
+        // login), "Connect a user" and then "Connect another user". Removing is
         // right under each account in the list (renderLanAccounts).
         lanAdd.setOnClickListener { connectTv(lanAdd) }
         findViewById<Button>(R.id.lan_copy).setOnClickListener {

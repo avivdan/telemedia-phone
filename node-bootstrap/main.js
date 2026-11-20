@@ -205,7 +205,7 @@ const actions = {
       return { addons: await stremioAccount.listAddons(linkFor(id).authKey) };
     });
   },
-  // "Connect a TV": a link.stremio.com link for the TV's Stremio account.
+  // "Connect a user": a link.stremio.com link for that user's Stremio account.
   '/lan/link': async () => {
     if (status.state !== 'running') throw new Error('Telemedia is not running yet.');
     return { link: await lanPairingLink() };
@@ -219,6 +219,9 @@ const actions = {
   // Sign this phone out of Telegram (the app restarts us afterwards). The
   // next person to log in must not inherit the TVs: this phone's entries
   // leave every connected account, those sessions end, and the key changes.
+  // Nor the Telegram key: api_id/api_hash are the my.telegram.org app of the
+  // account that logs out, so they go too. The next login starts like a
+  // first one and gets that account's own key (main(), step 1).
   '/logout': async () => {
     try {
       const { Api } = require('telegram');
@@ -233,7 +236,8 @@ const actions = {
     }
     await Promise.race([disconnectAllTvs(), sleep(25_000)]).catch(() => {});
     patchConfig({
-      session: undefined, groupsDone: undefined, stremioLinks: undefined, ownerName: undefined, lanKey: lan.newKey(),
+      session: undefined, apiId: undefined, apiHash: undefined,
+      groupsDone: undefined, stremioLinks: undefined, ownerName: undefined, lanKey: lan.newKey(),
     });
     if (gateway) {
       gateway.dropKeyed();
@@ -503,7 +507,7 @@ function startAddon(cfg) {
 // Stremio accounts this phone is connected to (stremio-account.js).
 //
 // A phone is a portable server: its owner connects it to any TV's Stremio
-// account ("Connect a TV"), the TV plays through the phone's personal key,
+// account ("Connect a user"), the TV plays through the phone's personal key,
 // and "Remove" takes it out of that account again and scrambles the key, so
 // that TV can't use the old address anymore. The phone's other connected
 // accounts get the new address automatically, as on every Wi-Fi address
@@ -614,7 +618,7 @@ function readLinks() {
 function linkFor(id) {
   const links = readLinks();
   const link = id ? links.find((l) => l.id === id) : links[0];
-  if (!link) throw new Error('No connected Stremio account.\nTap Connect a TV first.');
+  if (!link) throw new Error('No connected Stremio account.\nTap Connect a user first.');
   return link;
 }
 
@@ -740,7 +744,7 @@ async function updateLink(link, url, manifest, { automatic = false } = {}) {
 // change, http → https, or a new key).
 // Automatic: never adds an entry the user removed in Stremio (that account is
 // then forgotten), never swaps an https address for http (smart-TV apps
-// would lose it; a "Connect a TV" tap still writes whatever is current), and
+// would lose it; a "Connect a user" tap still writes whatever is current), and
 // never writes a guessed address.
 const targetUrl = (link, url, key) => lan.accountTargetUrl(link.url, url, key, ipSource);
 
@@ -874,7 +878,7 @@ function refreshCert() {
     });
 }
 
-// "Connect a TV": a link.stremio.com link. The TV's owner confirms it, on
+// "Connect a user": a link.stremio.com link. That user confirms it, on
 // this phone (the page opens here) or on their own phone (QR code on screen).
 // Then this phone's entry is added to that account and the session kept.
 async function lanPairingLink() {
@@ -961,7 +965,7 @@ function removeLink(id) {
         || (a.transportUrl && (a.transportUrl === link.url || a.transportUrl.includes(`/${key}/`))));
     } catch (err) {
       problem = stremioAccount.isAuthError(err)
-        ? 'Removed from the list.\nStremio had already signed this phone out of that account, so its entry stays there.\nIt doesn\'t work anymore (new key).\nYou can delete it in Stremio on that TV, under Add-ons.'
+        ? 'Removed from the list.\nStremio had already signed this phone out of that account, so its entry stays there.\nIt doesn\'t work anymore (new key).\nYou can delete it in that user\'s Stremio, under Add-ons.'
         : 'Removed from the list.\nStremio couldn\'t be reached to delete its entry.\nIt doesn\'t work anymore (new key).';
       console.log('[lan] remove: ' + messageOf(err));
     }

@@ -388,7 +388,7 @@
                 android:textIsSelectable="true"
                 android:textSize="13sp" />
 
-            <!-- "Connect a TV", then "Connect another TV". -->
+            <!-- "Connect a user", then "Connect another user". -->
             <Button
                 android:id="@+id/lan_add"
                 style="@style/Telemedia.Button.Primary"

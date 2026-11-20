@@ -45,22 +45,23 @@ Still not there? Stremio on the phone is logged in to another account: tap
 The phone can serve Stremio on any TV or computer on the same Wi-Fi, like a
 small home server: your own TV, or a friend's.
 
-1. In Telemedia, under **Watch on a TV or computer**, tap **Connect a TV**.
-   Then either:
-   - log in to **that TV's Stremio account** on the page that opens and
+1. In Telemedia, under **Watch on a TV or computer**, tap **Connect a user**.
+   A user is a Stremio account: the one on your own TV or computer, or a
+   friend's. Then either:
+   - log in to **that user's Stremio account** on the page that opens and
      confirm, or
-   - let the TV's owner scan the code shown in Telemedia with **their own
+   - let that user scan the code shown in Telemedia with **their own
      phone** and confirm there (no password typed on your phone).
    Stremio on every device logged in to that account now lists
    **Telemedia (*your name*'s phone)**.
 2. Keep the phone on the same Wi-Fi, ideally charging. It keeps serving with
    the screen off.
-3. **Done with that TV?** Find its account under **Connected Stremio
+3. **Done with that user?** Find their account under **Connected Stremio
    accounts** (the bottom of that card) and tap **Remove from Stremio
    account**, right below it. That deletes Telemedia from that Stremio account,
    ends the phone's session in it and gives your phone a new personal key, so
-   that TV can't use your phone anymore. Your other connected accounts (your
-   own TV) get the new key by themselves. **Connect another TV** (the main
+   that user can't use your phone anymore. Your other connected accounts (your
+   own TV) get the new key by themselves. **Connect another user** (the main
    button once one is connected) adds one more account.
 
 The list in Telemedia shows every connected Stremio account. If the phone's
@@ -112,8 +113,12 @@ the phone's Tailscale IP in the address instead.
   after a restart of the phone, until you tap **Start Telemedia**.
 - **Restart** in the app fixes most hiccups.
 - **Log out:** at the top of Telemedia, next to "Logged in to Telegram as
-  *name*". It also takes your TVs out. You can also sign the phone out from
-  Telegram: *Settings → Devices*.
+  *name*". It also takes your TVs out, and the phone forgets that account's
+  API key. The next login is like the first one, with any Telegram account:
+  that account gets its own key. (Telemedia only finds videos in chats that
+  account is in.) You can also sign the phone out from Telegram:
+  *Settings → Devices*. That keeps the key, so use **Log out** here to switch
+  to another account.
 - Updates: install the new APK over the old one. It keeps your login.
 
 ## Good to know
@@ -153,7 +158,7 @@ happen.
 3. **Stremio on the phone** → **Add to Stremio** with the same account as the
    phone's Stremio app → search a Hebrew title (e.g. החברים של נאור): results
    in the **חיפוש בעברית** row → an episode plays.
-4. **Connect a TV** → the TV's Stremio lists **Telemedia (*name*'s phone)** →
+4. **Connect a user** → the TV's Stremio lists **Telemedia (*name*'s phone)** →
    plays on an Android TV and on a smart-TV app (VIDAA / LG / Samsung) → skip
    forward and back → pause a few minutes and resume.
 5. **Screen off** → phone screen off while the TV plays, 10+ minutes → keeps
@@ -165,7 +170,7 @@ happen.
 8. **Stop** in the notification → stops → open the app: "Telemedia is
    stopped" → **Start Telemedia** → back. Stop again, reboot → still stopped.
 9. **Remove** → with a second Stremio account connected (**Connect another
-   TV**, the owner scans the code with their own phone and confirms) →
+   user**, that user scans the code with their own phone and confirms) →
    **Remove from Stremio account** under that account → that TV can't play anymore, even
    a video it was playing → your own TV still plays (it got the new key).
 
@@ -179,7 +184,8 @@ happen.
     Stremio Add-ons → it stays removed (Telemedia forgets that account).
 13. **Log out** (top of the screen, next to "Logged in to Telegram as …") →
     the TVs lose Telemedia too (it leaves their Stremio accounts) → log in
-    again (needs a code; mind item 1).
+    again, also with another account: it runs like a first login and fetches
+    that account's own API key (mind item 1).
 
 Something wrong with a TV? `adb logcat -s TelemediaNode | grep "\[lan\]"`
 shows each request from other devices (key removed).
@@ -238,8 +244,8 @@ BootReceiver → starts NodeService on boot, once set up
   Routers with DNS-rebinding protection may refuse such names; then use the
   http address.
 - **Connected accounts** (`stremio-account.js`, `config.stremioLinks`):
-  "Connect a TV" is the link login (link.stremio.com; the page opens on the
-  phone, and its QR code is shown for the TV owner's own phone). The phone's
+  "Connect a user" is the link login (link.stremio.com; the page opens on the
+  phone, and its QR code is shown for that user's own phone). The phone's
   entry is added to that account and the session key kept (app-private), one
   per account (`getUser` tells accounts apart). Every account is updated when
   the address, http/https or the key changes; automatic updates only replace
@@ -276,7 +282,9 @@ BootReceiver → starts NodeService on boot, once set up
   deletes it at the end. No token is ever inside the APK.
 - **Log out of Telegram** also takes this phone out of every connected
   Stremio account, ends those sessions and changes the key, so whoever logs
-  in next doesn't inherit the TVs.
+  in next doesn't inherit the TVs. It also forgets the api_id/api_hash: they
+  are the my.telegram.org app of the account that logged out, so the next
+  account never runs on them and gets its own through the first-run setup.
 - The keyless addon address (127.0.0.1:7000) is for Stremio on the phone:
   browser pages on the phone are refused (only Stremio's own web origins may
   call it), and so are other host names. Other *apps* on the phone can still
